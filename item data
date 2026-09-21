@@ -1,0 +1,419 @@
+using UnityEngine;
+
+public enum ItemCategory
+{
+    Jewelry,      // Mücevher & Değerli Taşlar
+    Electronics,  // Telefon, Konsol, Bilgisayar
+    Antiques,     // Tarihi objeler, Madalyalar, Paralar
+    Collectibles  // Çizgi romanlar, Plaklar, Spor kartları
+}
+
+public enum ItemRarity
+{
+    Common,       // Sıradan
+    Uncommon,     // Nadirce
+    Rare,         // Nadir
+    Epic,         // Çok Nadir / Koleksiyonluk
+    Legendary     // Efsanevi / Müzelik
+}
+
+public enum ItemCondition
+{
+    Broken,       // Kırık / Bozuk (Değeri çok kırar)
+    Poor,         // Kötü / Yıpranmış
+    Fair,         // İdare Eder / Orta
+    Good,         // İyi
+    Mint          // Sıfır Ayarında / Kusursuz
+}
+
+public enum ItemAuthenticity
+{
+    Authentic,    // Orijinal ürün
+    Counterfeit,  // Sahte / Taklit / Çakma
+    Stolen        // Çalıntı / Sıcak mal
+}
+
+[CreateAssetMenu(fileName = "NewItemData", menuName = "PawnShop/Item Data")]
+public class ItemData : ScriptableObject
+{
+    [Header("Temel Kimlik Bilgileri")]
+    [Tooltip("Örn: ITM_ROLEX_01 veya benzersiz kod")]
+    public string itemID;
+    public string itemName;
+    public ItemCategory category;
+    public Sprite icon;
+
+    [Header("Fiyatlandırma & Değer")]
+    [Tooltip("Eşyanın baz/liste piyasa değeri")]
+    public float baseValue;
+    [Tooltip("En kötü durumda (hasarlı/çaresiz pazarlık) inebileceği dip fiyat")]
+    public float minValue;
+    [Tooltip("Koleksiyoncuya veya kusursuz durumda satılabilecek tavan fiyat")]
+    public float maxValue;
+
+    [Header("Eşya Durumu & Orijinallik")]
+    public ItemRarity rarity;
+    public ItemCondition condition;
+    public ItemAuthenticity authenticity;
+
+    [Header("Fiziksel & Teknik Detaylar")]
+    public string brand;             // Marka (Örn: Rolex, Sony, Fender)
+    public int age;                  // Eşyanın yaşı (Örn: 25 yaşında vintage amfi)
+    public float weight;             // Ağırlık (kg cinsinden)
+    public string serialNumber;      // Seri Numarası (Sahte/Çalıntı kontrolü için)
+
+    /// <summary>
+    /// Eşyanın kondisyon çarpanına göre güncel piyasa değerini hesaplar.
+    /// </summary>
+    public float CalculateCurrentValue()
+    {
+        float conditionMultiplier = 1.0f;
+
+        switch (condition)
+        {
+            case ItemCondition.Broken:  conditionMultiplier = 0.20f; break; // %80 değer kaybı
+            case ItemCondition.Poor:    conditionMultiplier = 0.50f; break; // %50 değer kaybı
+            case ItemCondition.Fair:    conditionMultiplier = 0.75f; break;
+            case ItemCondition.Good:    conditionMultiplier = 1.00f; break;
+            case ItemCondition.Mint:    conditionMultiplier = 1.25f; break; // %25 prim yapar
+        }
+
+        // Sahte ürünlerin gerçek değeri taban fiyatın çok altındadır
+        if (authenticity == ItemAuthenticity.Counterfeit)
+        {
+            conditionMultiplier *= 0.10f; // Sahteyse değeri yerin dibine girer
+        }
+
+        float calculated = baseValue * conditionMultiplier;
+        return Mathf.Clamp(calculated, minValue, maxValue);
+    }
+}
+
+using UnityEngine;
+
+/// <summary>
+/// Dükkandaki eşyaların ana kategorileri.
+/// </summary>
+public enum ItemCategory
+{
+    Watch,        // Lüks Kol Saatleri, Cep Saatleri
+    Jewelry,      // Yüzük, Kolye, Pırlanta, Külçe Altın
+    Painting,     // Tablolar, Tuval Resimleri, Yağlı Boya Sanat Eserleri
+    Electronics,  // Telefon, Laptop, Oyun Konsolu, Televizyon
+    Antique,      // Tarihi Objeler, Eski Heykeller, Savaş Kalıntıları
+    Weapon,       // Tarihi/Modern Ateşli Silahlar, Bıçaklar, Kılıçlar
+    Furniture,    // Vintage Koltuk, Klasik Masa, Masif Dolap
+    Collectible,  // Spor Kartları, Nadir Figürler, Çizgi Romanlar
+    Instrument,   // Gitar, Keman, Saksofon, Amfi ve Ses Ekipmanları
+    Clothing,     // Tasarımcı Kıyafetleri, Vintage Deri Ceket, Kürk
+    VehiclePart,  // Klasik Araba Parçaları, Jant, Karbüratör, Egzoz
+    Book,         // İlk Basım Romanlar, İmzalı Kitaplar, El Yazmaları
+    Coin,         // Tarihi Sikkeler, Nadir Madeni Paralar, Darphane Basımları
+    Camera,       // Vintage Analog Fotoğraf Makineleri, Özel Lensler
+    Tool          // Profesyonel El Aletleri, Jeneratör, Tamir Setleri
+}
+
+/// <summary>
+/// Kategorilere özel yardımcı fonksiyonlar (UI ve Oyun Mantığı İçin).
+/// </summary>
+public static class ItemCategoryExtensions
+{
+    /// <summary>
+    /// Kategori adını UI'da gösterilecek temiz Türkçe metne çevirir.
+    /// </summary>
+    public static string ToDisplayName(this ItemCategory category)
+    {
+        switch (category)
+        {
+            case ItemCategory.Watch:        return "Saat";
+            case ItemCategory.Jewelry:      return "Mücevher & Değerli Maden";
+            case ItemCategory.Painting:     return "Tablo & Sanat Eseri";
+            case ItemCategory.Electronics:  return "Elektronik";
+            case ItemCategory.Antique:      return "Antika";
+            case ItemCategory.Weapon:       return "Silah & Kesici Alet";
+            case ItemCategory.Furniture:    return "Mobilya";
+            case ItemCategory.Collectible:  return "Koleksiyon Parçası";
+            case ItemCategory.Instrument:   return "Müzik Enstrümanı";
+            case ItemCategory.Clothing:     return "Giyim & Moda";
+            case ItemCategory.VehiclePart:  return "Araç Parçası";
+            case ItemCategory.Book:         return "Nadir Kitap";
+            case ItemCategory.Coin:         return "Madeni Para & Sikke";
+            case ItemCategory.Camera:       return "Fotoğraf & Kamera";
+            case ItemCategory.Tool:         return "Alet & Ekipman";
+            default:                        return category.ToString();
+        }
+    }
+
+    /// <summary>
+    /// Bazı kategorilerin sahte çıkma ihtimali doğası gereği daha yüksektir.
+    /// Bu katsayı sahtelik testlerinde risk çarpanı olarak kullanılabilir.
+    /// </summary>
+    public static float GetCounterfeitRiskMultiplier(this ItemCategory category)
+    {
+        switch (category)
+        {
+            case ItemCategory.Watch:        return 1.4f; // Replika saat piyasası çok yaygın
+            case ItemCategory.Jewelry:      return 1.3f; // Sahte altın / zirkon taş riski
+            case ItemCategory.Painting:     return 1.5f; // Taklit sanat eseri riski
+            case ItemCategory.Coin:         return 1.35f; // Döküm sahte tarihi para riski
+            case ItemCategory.Electronics:  return 1.1f; // Çakma veya çalıntı riski
+            case ItemCategory.Tool:         return 0.5f; // Aletlerin çakması daha az tercih edilir
+            case ItemCategory.Furniture:    return 0.6f;
+            default:                        return 1.0f;
+        }
+    }
+}
+
+using UnityEngine;
+
+[System.Serializable]
+public class PawnShopItem
+{
+    public string uniqueInstanceID;
+    public ItemData template; // Bağlı olduğu ana ScriptableObject
+
+    public string customName;
+    public ItemCategory category => template.category;
+    public ItemCondition condition;
+    public ItemAuthenticity authenticity;
+
+    public float currentMarketValue; // Ekspertiz / kondisyona göre net piyasa değeri
+    public string serialNumber;
+    public bool isIdentified;        // Oyuncu sahte mi, çalıntı mı inceledi mi?
+
+    public PawnShopItem(ItemData baseData, ItemCondition cond, ItemAuthenticity auth, string serial)
+    {
+        uniqueInstanceID = System.Guid.NewGuid().ToString();
+        template = baseData;
+        customName = baseData.itemName;
+        condition = cond;
+        authenticity = auth;
+        serialNumber = serial;
+        isIdentified = false;
+
+        CalculateInstanceValue();
+    }
+
+    public void CalculateInstanceValue()
+    {
+        float multiplier = 1f;
+        switch (condition)
+        {
+            case ItemCondition.Broken: multiplier = 0.20f; break;
+            case ItemCondition.Poor:   multiplier = 0.50f; break;
+            case ItemCondition.Fair:   multiplier = 0.75f; break;
+            case ItemCondition.Good:   multiplier = 1.00f; break;
+            case ItemCondition.Mint:   multiplier = 1.25f; break;
+        }
+
+        // Sahteyse değeri çöp olur, çalıntıysa piyasa değeri aynı kalır ama hukuki risk taşır
+        if (authenticity == ItemAuthenticity.Counterfeit)
+        {
+            multiplier *= 0.10f;
+        }
+
+        currentMarketValue = Mathf.Clamp(template.baseValue * multiplier, template.minValue, template.maxValue);
+    }
+}
+
+using UnityEngine;
+
+public struct NegotiationStepResult
+{
+    public NegotiationOutcome outcome;
+    public float counterOfferPrice;
+    public string dialogueLine;
+}
+
+public static class NegotiationEngine
+{
+    /// <summary>
+    /// Oyuncunun teklifini değerlendirir ve müşterinin psikolojisine göre karşı hamle üretir.
+    /// </summary>
+    public static NegotiationStepResult ProcessTurn(
+        CustomerTraits traits, 
+        PawnShopItem item, 
+        float playerOffer, 
+        float lastCustomerOffer, 
+        ref int currentStrikes)
+    {
+        NegotiationStepResult result = new NegotiationStepResult();
+        float targetValue = item.currentMarketValue;
+
+        // 1. Müşterinin inebileceği en dip fiyat (Floor Price)
+        float floorMultiplier = 1.0f;
+        
+        // Çaresizlik, aciliyet ve borç fiyatı dibe çeker
+        float desperateFactor = (traits.desperation * 0.4f + traits.urgency * 0.3f + traits.debt * 0.3f) / 100f;
+        floorMultiplier -= (desperateFactor * 0.40f); // %40'a kadar kırabilir
+
+        // Gurur, açgözlülük ve eşyaya bağlılık tabanı korur
+        float resistanceFactor = (traits.pride * 0.4f + traits.itemAttachment * 0.35f + traits.greed * 0.25f) / 100f;
+        floorMultiplier += (resistanceFactor * 0.30f);
+
+        float absoluteFloor = targetValue * Mathf.Clamp(floorMultiplier, 0.35f, 1.4f);
+
+        // -----------------------------------------------------------------
+        // DURUM A: Teklif tabanın üstündeyse -> KABUL
+        // -----------------------------------------------------------------
+        if (playerOffer >= absoluteFloor)
+        {
+            result.outcome = NegotiationOutcome.Accepted;
+            result.counterOfferPrice = playerOffer;
+            result.dialogueLine = GetAcceptanceDialogue(traits);
+            return result;
+        }
+
+        // -----------------------------------------------------------------
+        // DURUM B: Hakaret Düzeyinde Düşük Teklif (Low-ball insult)
+        // -----------------------------------------------------------------
+        float offerRatio = playerOffer / absoluteFloor;
+        if (offerRatio < 0.55f && traits.pride > 65)
+        {
+            result.outcome = NegotiationOutcome.InsultedAndLeft;
+            result.counterOfferPrice = 0f;
+            result.dialogueLine = "Sen benimle alay mı ediyorsun? Malımı sana yedireceğime çöpe atarım daha iyi!";
+            return result;
+        }
+
+        // -----------------------------------------------------------------
+        // DURUM C: Sabır Tükendi mi?
+        // -----------------------------------------------------------------
+        currentStrikes--;
+        if (currentStrikes <= 0)
+        {
+            result.outcome = NegotiationOutcome.WalkedAway;
+            result.counterOfferPrice = 0f;
+            result.dialogueLine = "Vaktimi boşa harcadın. Anlaşamayacağız, gidiyorum.";
+            return result;
+        }
+
+        // -----------------------------------------------------------------
+        // DURUM D: Karşı Teklif Üretimi (Counter-Offer)
+        // -----------------------------------------------------------------
+        result.outcome = NegotiationOutcome.CounterOffer;
+
+        // Ne kadar esneyecek? (Pazarlık yeteneği ve inatçılığı belirler)
+        float stepDiscountRate = (100 - traits.hagglingSkill) * 0.002f + (traits.urgency * 0.002f); 
+        stepDiscountRate = Mathf.Clamp(stepDiscountRate, 0.03f, 0.15f);
+
+        float nextOffer = lastCustomerOffer * (1f - stepDiscountRate);
+        if (nextOffer < absoluteFloor) nextOffer = absoluteFloor;
+
+        result.counterOfferPrice = Mathf.Round(nextOffer);
+        result.dialogueLine = GetCounterDialogue(traits, result.counterOfferPrice);
+
+        return result;
+    }
+
+    private static string GetAcceptanceDialogue(CustomerTraits traits)
+    {
+        if (traits.desperation > 70) return "Tamam, ver parayı gitsin. Zaten zamanım daralıyor.";
+        if (traits.pride > 75) return "Pekala, bu teklif kabul edilebilir seviyede. Anlaştık.";
+        return "Fiyat gayet adil. El sıkışalım.";
+    }
+
+    private static string GetCounterDialogue(CustomerTraits traits, float price)
+    {
+        if (traits.itemAttachment > 75)
+            return $"Bu eşyanın bende anısı var, o kadar ucuza bırakamam. En son {price:N0}$ olur.";
+        if (traits.urgency > 70)
+            return $"Acelem var diye beni soymaya kalkma! {price:N0}$ verirsen hemen al git.";
+        if (traits.pride > 70)
+            return $"Bu malın bir ağırlığı var. {price:N0}$'dan aşağı inmem hakaret olur.";
+        
+        return $"Bu teklif çok düşük. Senin için son olarak {price:N0}$ seviyesine inebilirim.";
+    }
+}
+
+public static class CustomerDialogueDatabase
+{
+    public static string GetEntryGreeting(CustomerTraits traits, string itemName)
+    {
+        // 1. Aşırı Borçlu ve Çaresiz
+        if (traits.debt > 80 && traits.desperation > 70)
+            return $"Selam usta... Elimde şu {itemName} var. Acil nakite ihtiyacım var, hemen bakabilir misin?";
+
+        // 2. Burnu Havada / Tok Satıcı
+        if (traits.pride > 75 && traits.needMoney < 40)
+            return $"Merhaba. Elimde nadide bir {itemName} bulunuyor. Değerini bilecek bir esnafa satmak isterim.";
+
+        // 3. Şüpheli / Sahtekar Eğilimli (Düşük dürüstlük, yüksek açgözlülük)
+        if (traits.honesty < 30 && traits.greed > 70)
+            return $"Hızlıca bir iş bağlayalım dostum. Şu {itemName} için bana sağlam bir fiyat ver, ikimiz de kazanalım.";
+
+        // 4. Aile Yadigarı / Duygusal Bağ
+        if (traits.itemAttachment > 80)
+            return $"Bunu buraya getirmek bile canımı yakıyor ama... Bu {itemName}'ı değerlendirmeni istiyorum.";
+
+        // Standart
+        return $"İyi günler. Elimdeki {itemName}'ı satmak istiyorum. Ne kadar verirsiniz?";
+    }
+}
+using UnityEngine;
+
+public class CustomerSession : MonoBehaviour
+{
+    public CustomerData customer;
+    public PawnShopItem currentItem;
+    
+    public int currentStrikes;
+    public float currentCustomerAskingPrice;
+
+    /// <summary>
+    /// Masaya yeni bir müşteri ve eşyasıyla oturum başlatır.
+    /// </summary>
+    public void StartSession(CustomerData newCustomer, PawnShopItem item)
+    {
+        customer = newCustomer;
+        currentItem = item;
+
+        // Sabır vuruş hakkı: Trait'e göre 1 - 5 arası
+        currentStrikes = Mathf.Clamp(customer.traits.patience / 20, 1, 5);
+
+        // Müşterinin ilk istediği açılış fiyatı (Açgözlülük ve gurura göre piyasa değerinin %110-%150'si ile başlar)
+        float markup = 1.10f + (customer.traits.greed * 0.003f) + (customer.traits.pride * 0.002f);
+        currentCustomerAskingPrice = Mathf.Round(item.currentMarketValue * markup);
+
+        // Giriş konuşması
+        string greeting = CustomerDialogueDatabase.GetEntryGreeting(customer.traits, item.customName);
+        Debug.Log($"<color=cyan>[{customer.fullName}]:</color> \"{greeting}\"");
+        Debug.Log($"İstediği Açılış Fiyatı: {currentCustomerAskingPrice:N0}$ (Gerçek Piyasa Değeri: {item.currentMarketValue:N0}$)");
+    }
+
+    /// <summary>
+    /// Oyuncu bir fiyat teklif ettiğinde çağrılır.
+    /// </summary>
+    public void SubmitPlayerOffer(float offer)
+    {
+        NegotiationStepResult result = NegotiationEngine.ProcessTurn(
+            customer.traits, 
+            currentItem, 
+            offer, 
+            currentCustomerAskingPrice, 
+            ref currentStrikes
+        );
+
+        Debug.Log($"<color=cyan>[{customer.fullName}]:</color> \"{result.dialogueLine}\"");
+
+        switch (result.outcome)
+        {
+            case NegotiationOutcome.Accepted:
+                Debug.Log("<color=green>İŞLEM BAŞARILI!</color> Eşya satın alındı.");
+                // Dükkan envanterine ekle, parayı düş vb.
+                break;
+
+            case NegotiationOutcome.CounterOffer:
+                currentCustomerAskingPrice = result.counterOfferPrice;
+                Debug.Log($"Yeni Karşı Teklif: {currentCustomerAskingPrice:N0}$ | Kalan Sabır: {currentStrikes}");
+                break;
+
+            case NegotiationOutcome.InsultedAndLeft:
+            case NegotiationOutcome.WalkedAway:
+                Debug.Log("<color=red>MASA DAĞILDI!</color> Müşteri kapıyı vurdu ve çıktı.");
+                // Masayı temizle
+                break;
+        }
+    }
+}
+
