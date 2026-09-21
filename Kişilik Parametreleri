@@ -1,0 +1,185 @@
+using UnityEngine;
+
+[System.Serializable]
+public class CustomerTraits
+{
+    [Header("Finansal & Durumsal Baskı")]
+    [Range(0, 100)] public int needMoney;       // Paraya ihtiyaç
+    [Range(0, 100)] public int debt;            // Borç seviyesi
+    [Range(0, 100)] public int urgency;         // Acelesi var mı? (Zaman baskısı)
+    [Range(0, 100)] public int desperation;     // Çaresizlik / Sıkışmışlık
+
+    [Header("Psikolojik & Karakter")]
+    [Range(0, 100)] public int patience;        // Sabır seviyesi
+    [Range(0, 100)] public int greed;           // Açgözlülük
+    [Range(0, 100)] public int pride;           // Gurur / Kibir (Düşük teklifi hakaret sayma)
+    [Range(0, 100)] public int trustworthiness; // Güvenilirlik
+    [Range(0, 100)] public int honesty;         // Dürüstlük (Kusurları saklama eğilimi)
+
+    [Header("Ticari & Bilgi Becerisi")]
+    [Range(0, 100)] public int hagglingSkill;   // Pazarlık kabiliyeti / İkna
+    [Range(0, 100)] public int itemAttachment;  // Eşyaya duygusal bağlılık
+    [Range(0, 100)] public int itemKnowledge;   // Malın gerçek değerini biliyor mu?
+
+    /// <summary>
+    /// Tamamen rastgele veya dengeli rastgele dağılım üretir.
+    /// </summary>
+    public static CustomerTraits GenerateRandom()
+    {
+        CustomerTraits traits = new CustomerTraits();
+
+        // Finansal Baskılar
+        traits.needMoney = Random.Range(10, 101);
+        traits.debt = Random.Range(0, 101);
+        traits.urgency = Random.Range(5, 101);
+        
+        // Çaresizlik: Borç ve paraya ihtiyaç yüksekse taban değeri artırılabilir
+        int baseDesperation = (traits.needMoney + traits.debt + traits.urgency) / 3;
+        traits.desperation = Mathf.Clamp(baseDesperation + Random.Range(-15, 16), 0, 100);
+
+        // Karakter Özellikleri
+        traits.patience = Random.Range(5, 101);
+        traits.greed = Random.Range(0, 101);
+        traits.pride = Random.Range(0, 101);
+        traits.trustworthiness = Random.Range(10, 101);
+        traits.honesty = Random.Range(10, 101);
+
+        // Ticari Yetenekler
+        traits.hagglingSkill = Random.Range(0, 101);
+        traits.itemAttachment = Random.Range(0, 101);
+        traits.itemKnowledge = Random.Range(10, 101);
+
+        return traits;
+    }
+
+    /// <summary>
+    /// UI veya debug loglarında 'ÇOK YÜKSEK', 'ORTA' gibi okunabilir metne çevirir.
+    /// </summary>
+    public static string GetTraitLevelName(int value)
+    {
+        if (value <= 20) return "ÇOK DÜŞÜK";
+        if (value <= 40) return "DÜŞÜK";
+        if (value <= 60) return "ORTA";
+        if (value <= 80) return "YÜKSEK";
+        return "ÇOK YÜKSEK";
+    }
+}
+
+using UnityEngine;
+
+public class CustomerBrain : MonoBehaviour
+{
+    public CustomerTraits traits;
+
+    private int currentStrikes = 0;
+    private int maxPatienceStrikes;
+
+    private void Awake()
+    {
+        if (traits == null)
+            traits = CustomerTraits.GenerateRandom();
+
+        InitializeBehavior();
+    }
+
+    public void SetTraits(CustomerTraits newTraits)
+    {
+        traits = newTraits;
+        InitializeBehavior();
+    }
+
+    private void InitializeBehavior()
+    {
+        // Sabır hakkı (1 ile 5 strike arası)
+        // Sabrı 0-20 olan 1 hata hakkı verir, 80-100 olan 4-5 hata hakkı verir.
+        maxPatienceStrikes = Mathf.Clamp(traits.patience / 20, 1, 5);
+        currentStrikes = maxPatienceStrikes;
+    }
+
+    /// <summary>
+    /// Müşterinin bir eşyayı satarken kabul edebileceği en dip (minimum) fiyatı hesaplar.
+    /// </summary>
+    /// <param name="actualItemValue">Eşyanın gerçek piyasa değeri</param>
+    public float CalculateMinimumAcceptablePrice(float actualItemValue)
+    {
+        // Temel çarpan: 1.0 (Tam değer)
+        float priceMultiplier = 1.0f;
+
+        // 1. Bilgi Faktörü: Eşyanın değerini bilmiyorsa yanıltılmaya açık (Değeri düşük sanabilir veya uçurabilir)
+        if (traits.itemKnowledge < 30)
+        {
+            // Bilgisiz ama açgözlüyse fiyatı uçurur, bilgisiz ve çaresizse bedavaya verir
+            priceMultiplier += (traits.greed - 50) / 100f * 0.3f;
+        }
+
+        // 2. Baskı Faktörü (Fiyatı düşürenler): Çaresizlik, Borç, Aciliyet
+        float pressure = (traits.desperation * 0.4f + traits.urgency * 0.3f + traits.needMoney * 0.3f) / 100f;
+        priceMultiplier -= (pressure * 0.40f); // Çaresizlik fiyatı %40'a kadar kırabilir
+
+        // 3. Direnç Faktörü (Fiyatı yükseltenler / Tok satıcılık): Gurur, Eşyaya Bağlılık, Açgözlülük
+        float resistance = (traits.pride * 0.4f + traits.itemAttachment * 0.35f + traits.greed * 0.25f) / 100f;
+        priceMultiplier += (resistance * 0.35f); // Gurur ve bağlılık fiyatı %35'e kadar yukarı çeker
+
+        // Dip sınır: Asla gerçek değerinin %20'sinin altına inmesin, en fazla %150'ye çıksın
+        priceMultiplier = Mathf.Clamp(priceMultiplier, 0.20f, 1.50f);
+
+        return actualItemValue * priceMultiplier;
+    }
+
+    /// <summary>
+    /// Oyuncunun teklifine tepki verir.
+    /// </summary>
+    public NegotiationOutcome EvaluatePlayerOffer(float playerOffer, float actualItemValue)
+    {
+        float minPrice = CalculateMinimumAcceptablePrice(actualItemValue);
+
+        // 1. Teklif kabul eşiğinde mi?
+        if (playerOffer >= minPrice)
+        {
+            return NegotiationOutcome.Accepted;
+        }
+
+        // 2. Hakaret/Gurur Kontrolü:
+        // Eğer teklif müşterinin beklentisinin çok altındaysa ve gururu yüksekse sabır dinlemeden masayı terk eder.
+        float offerRatio = playerOffer / minPrice;
+        if (offerRatio < 0.50f && traits.pride > 75)
+        {
+            Debug.Log("<color=red>Gururuna yediremedi:</color> 'Bu teklif bir hakarettir!' diyerek dükkandan çıktı.");
+            return NegotiationOutcome.InsultedAndLeft;
+        }
+
+        // 3. Sabır Tüketimi
+        currentStrikes--;
+        if (currentStrikes <= 0)
+        {
+            return NegotiationOutcome.WalkedAway;
+        }
+
+        return NegotiationOutcome.CounterOffer;
+    }
+
+    /// <summary>
+    /// Karakter profilini debug konsolunda listeler.
+    /// </summary>
+    public void PrintProfile()
+    {
+        Debug.Log($"=== MÜŞTERİ KİŞİLİK PROFİLİ ===" +
+                  $"\nBorç: {CustomerTraits.GetTraitLevelName(traits.debt)} ({traits.debt})" +
+                  $"\nAciliyet: {CustomerTraits.GetTraitLevelName(traits.urgency)} ({traits.urgency})" +
+                  $"\nParaya İhtiyaç: {CustomerTraits.GetTraitLevelName(traits.needMoney)} ({traits.needMoney})" +
+                  $"\nGurur / Tokluk: {CustomerTraits.GetTraitLevelName(traits.pride)} ({traits.pride})" +
+                  $"\nEşyaya Bağlılık: {CustomerTraits.GetTraitLevelName(traits.itemAttachment)} ({traits.itemAttachment})" +
+                  $"\nPazarlık Gücü: {CustomerTraits.GetTraitLevelName(traits.hagglingSkill)} ({traits.hagglingSkill})" +
+                  $"\nBilgi Seviyesi: {CustomerTraits.GetTraitLevelName(traits.itemKnowledge)} ({traits.itemKnowledge})" +
+                  $"\nSabır: {CustomerTraits.GetTraitLevelName(traits.patience)} ({traits.patience})");
+    }
+}
+
+public enum NegotiationOutcome
+{
+    Accepted,           // Teklif kabul edildi
+    CounterOffer,       // Fiyat az geldi ama hala masada
+    WalkedAway,         // Sabrı tükendi, çıktı gitti
+    InsultedAndLeft     // Düşük teklifi gururuna yediremedi, anında terk etti
+}
+
