@@ -1,0 +1,291 @@
+using UnityEngine;
+
+public static class CustomerGenerator
+{
+    /// <summary>
+    /// Mantıklı bağıntılara ve ağırlıklı olasılıklara sahip yeni bir CustomerTraits üretir.
+    /// </summary>
+    public static CustomerTraits GenerateRealisticCustomer()
+    {
+        CustomerTraits traits = new CustomerTraits();
+
+        // -------------------------------------------------------------
+        // 1. ADIM: Temel Finansal Durum (Zincirin Başlangıcı)
+        // -------------------------------------------------------------
+        // Borç seviyesini belirle (0 - 100)
+        traits.debt = RollBaseValue();
+
+        // BORÇ -> PARAYA İHTİYAÇ (Ağırlıklı Bağıntı)
+        // Kural: Borç yüksekse (%70 ihtimalle) paraya ihtiyaç da yüksek çıkar.
+        if (traits.debt > 65)
+        {
+            if (Random.value < 0.70f) // %70 İhtimal
+                traits.needMoney = Random.Range(65, 101); // Yüksek veya Çok Yüksek
+            else
+                traits.needMoney = Random.Range(20, 65);  // %30 ihtimalle borcu var ama acil paraya sıkışmamış
+        }
+        else if (traits.debt < 30)
+        {
+            // Borcu az olan birinin paraya ihtiyacı genelde düşüktür (%70)
+            traits.needMoney = (Random.value < 0.70f) ? Random.Range(0, 40) : Random.Range(40, 85);
+        }
+        else
+        {
+            // Orta seviye borçta dengeli dağılım
+            traits.needMoney = Random.Range(25, 75);
+        }
+
+        // -------------------------------------------------------------
+        // 2. ADIM: Aciliyet ve Çaresizlik Hesabı
+        // -------------------------------------------------------------
+        // Aciliyet: Borç ve paraya ihtiyaç yüksekse zaman baskısı ağırlıklı olarak yükselir.
+        if (traits.needMoney > 70)
+        {
+            // %60 ihtimalle çok acelesi var, %40 ihtimalle zamanı idare edebiliyor
+            traits.urgency = (Random.value < 0.60f) ? Random.Range(60, 101) : Random.Range(20, 60);
+        }
+        else
+        {
+            traits.urgency = Random.Range(5, 60);
+        }
+
+        // Çaresizlik (Desperation): Finansal durum + zaman baskısının doğal bir sonucudur
+        int pressureScore = (int)((traits.debt * 0.35f) + (traits.needMoney * 0.45f) + (traits.urgency * 0.20f));
+        // Üzerine küçük bir rastgele sapma ekleyelim (-10 ile +10 arası)
+        traits.desperation = Mathf.Clamp(pressureScore + Random.Range(-10, 11), 0, 100);
+
+        // -------------------------------------------------------------
+        // 3. ADIM: Psikolojik / Karakter Özellikleri (Varyasyon Alanı)
+        // -------------------------------------------------------------
+        // Gurur (Pride): Paraya ihtiyaçtan BAĞIMSIZDIR.
+        // Borçlu olması gurursuz olacağı anlamına gelmez.
+        traits.pride = Random.Range(10, 101);
+
+        // Açgözlülük (Greed):
+        // Paraya ihtiyacı az olan birinde açgözlülük yüksekse tam bir "Tok Satıcı" çıkar.
+        // Paraya ihtiyacı çok olan birinde açgözlülük yüksekse "Köşeyi dönmeye çalışan kumarbaz" çıkar.
+        traits.greed = Random.Range(10, 101);
+
+        // Sabır (Patience):
+        // Aciliyeti çok yüksek olan birinin sabrı genelde daha kırılgandır (%65 ihtimalle düşük).
+        if (traits.urgency > 75)
+        {
+            traits.patience = (Random.value < 0.65f) ? Random.Range(5, 40) : Random.Range(40, 75);
+        }
+        else
+        {
+            traits.patience = Random.Range(20, 95);
+        }
+
+        // Güvenilirlik & Dürüstlük:
+        // Çaresizlik çok uç noktadaysa (Desperation > 80), hayatta kalma içgüdüsüyle
+        // dürüstlük ve güvenilirlik değerleri %55 olasılıkla düşebilir.
+        if (traits.desperation > 80 && Random.value < 0.55f)
+        {
+            traits.honesty = Random.Range(5, 45);         // Malın kusurlarını saklar
+            traits.trustworthiness = Random.Range(5, 40); // Güven vermez
+        }
+        else
+        {
+            traits.honesty = Random.Range(25, 95);
+            traits.trustworthiness = Random.Range(25, 95);
+        }
+
+        // -------------------------------------------------------------
+        // 4. ADIM: Ticari Yetenekler ve Eşya İlişkisi
+        // -------------------------------------------------------------
+        // Pazarlık Kabiliyeti (Haggling Skill): Karakterin zekası/esnaflığıdır, borçtan bağımsızdır.
+        traits.hagglingSkill = Random.Range(10, 101);
+
+        // Malın Değerini Bilme (Item Knowledge):
+        traits.itemKnowledge = Random.Range(15, 101);
+
+        // Eşyaya Duygusal Bağlılık (Item Attachment):
+        // Yüksek çıkarsa, borcu tavan olsa bile malını ucuza vermemek için diretir.
+        traits.itemAttachment = Random.Range(0, 101);
+
+        return traits;
+    }
+
+    /// <summary>
+    /// Çan eğrisine (Gaussian / Normal Dağılım) yakın bir rastgele sayı üretir.
+    /// Uç değerler (0-15 veya 85-100) nadiren gelirken, orta değerler daha sık gelir.
+    /// </summary>
+    private static int RollBaseValue()
+    {
+        // 3 rastgele sayının ortalamasını alarak orta değerleri ağırlıklandırırız
+        float roll = (Random.value + Random.value + Random.value) / 3f;
+        return Mathf.RoundToInt(roll * 100f);
+    }
+}
+
+public CustomerData GenerateRandomCustomer()
+{
+    Gender gender = (Random.value > 0.5f) ? Gender.Male : Gender.Female;
+
+    string firstName = (gender == Gender.Male) 
+        ? maleFirstNames[Random.Range(0, maleFirstNames.Length)]
+        : femaleFirstNames[Random.Range(0, femaleFirstNames.Length)];
+
+    string lastName = lastNames[Random.Range(0, lastNames.Length)];
+    string completeName = $"{firstName} {lastName}";
+
+    // Ağırlıklı rastgele kişilik özelliklerini oluştur
+    CustomerTraits generatedTraits = CustomerGenerator.GenerateRealisticCustomer();
+
+    // PatienceType'ı üretilen sayısal sabır (patience) trait'ine bağlayabilirsin
+    PatienceType patience = PatienceType.Moderate;
+    if (generatedTraits.patience <= 33) patience = PatienceType.Impatient;
+    else if (generatedTraits.patience >= 67) patience = PatienceType.Patient;
+
+    CustomerData customer = new CustomerData(completeName, gender, patience);
+    customer.traits = generatedTraits; // CustomerData içine 'public CustomerTraits traits;' ekleyerek
+
+    return customer;
+}
+
+using UnityEngine;
+
+public enum ItemLegality
+{
+    Clean,       // Yasal, temiz ve orijinal eşya
+    Counterfeit, // Sahte / Çakma ürün (Düşük maliyetli kopya)
+    Stolen       // Çalıntı / Sıcak mal (Polis veya asıl sahibi arıyor olabilir)
+}
+
+public struct ItemRiskReport
+{
+    public ItemLegality legality;
+    public float fakeChance;      // % cinsinden sahte olma ihtimali
+    public float stolenChance;    // % cinsinden çalıntı olma ihtimali
+    public bool isLyingAboutOrigin; // Malın kusurunu veya geçmişini gizliyor mu?
+}
+
+public static class ItemRiskEvaluator
+{
+    /// <summary>
+    /// Müşterinin kişisel özelliklerine göre getirdiği eşyanın sahte veya çalıntı olma riskini hesaplar.
+    /// </summary>
+    public static ItemRiskReport EvaluateItem(CustomerTraits traits)
+    {
+        // 1. Dürüstlük ve Güvenilirlik ne kadar DÜŞÜKSE risk o kadar ARTAR (Ters orantı)
+        float dishonestyFactor = (100 - traits.honesty);               // 0 - 100
+        float untrustworthinessFactor = (100 - traits.trustworthiness); // 0 - 100
+
+        // 2. Çaresizlik ve Açgözlülük riski tetikleyen hızlandırıcılardır
+        // Çok çaresiz biri (%40 çalıntıya kayar), çok açgözlü biri sahte mal kakalamaya çalışır.
+        float desperationBoost = traits.desperation * 0.35f;
+        float greedBoost = traits.greed * 0.25f;
+
+        // -------------------------------------------------------------
+        // SAHTE (COUNTERFEIT) ÜRÜN İHTİMALİ HESABI
+        // -------------------------------------------------------------
+        // Sahtecilik daha çok düşük dürüstlük, yüksek açgözlülük ve eşya bilgisiyle alakalıdır.
+        float rawFakeChance = (dishonestyFactor * 0.45f) + 
+                              (untrustworthinessFactor * 0.25f) + 
+                              greedBoost;
+
+        // Eğer müşterinin eşya bilgisi yüksekse (malın çakmasını nereden bulacağını bilir) risk artar
+        if (traits.itemKnowledge > 70) rawFakeChance += 10f;
+
+        float finalFakeChance = Mathf.Clamp(rawFakeChance, 2f, 75f); // En dürüstte bile %2, en sahtekarda %75
+
+        // -------------------------------------------------------------
+        // ÇALINTI (STOLEN) ÜRÜN İHTİMALİ HESABI
+        // -------------------------------------------------------------
+        // Çalıntı eşya getirme daha çok çaresizlik, borç baskısı ve aciliyetten doğar.
+        float rawStolenChance = (dishonestyFactor * 0.30f) + 
+                                (untrustworthinessFactor * 0.30f) + 
+                                desperationBoost + 
+                                (traits.urgency * 0.15f);
+
+        // Borç tavan yapmışsa çalıntı mal elden çıkarma ihtimali fırlar
+        if (traits.debt > 80) rawStolenChance += 15f;
+
+        float finalStolenChance = Mathf.Clamp(rawStolenChance, 1f, 80f); // En temizde %1, en köşeye sıkışanda %80
+
+        // -------------------------------------------------------------
+        // RASTGELE ZAR ATIMI (DICE ROLL)
+        // -------------------------------------------------------------
+        ItemRiskReport report = new ItemRiskReport
+        {
+            fakeChance = finalFakeChance,
+            stolenChance = finalStolenChance,
+            legality = ItemLegality.Clean
+        };
+
+        float roll = Random.Range(0f, 100f);
+
+        // Çalıntı ve Sahtelik kontrolü (Önce daha tehlikeli olan Çalıntı kontrol edilir)
+        if (roll < finalStolenChance)
+        {
+            report.legality = ItemLegality.Stolen;
+        }
+        else
+        {
+            float secondRoll = Random.Range(0f, 100f);
+            if (secondRoll < finalFakeChance)
+            {
+                report.legality = ItemLegality.Counterfeit;
+            }
+        }
+
+        // Müşteri eşyanın kusurunu gizliyor mu?
+        // Dürüstlüğü 40'ın altındaysa ve eşya temiz değilse yalan söyler.
+        report.isLyingAboutOrigin = (report.legality != ItemLegality.Clean) && (traits.honesty < 45);
+
+        return report;
+    }
+}
+
+[System.Serializable]
+public class PawnItem
+{
+    public string itemName;
+    public float baseValue;          // Orijinal piyasa değeri
+    public ItemLegality legality;    // Eşyanın gerçek durumu (Gizli kalabilir)
+    public bool isIdentified;        // Oyuncu ekspertiz yapıp gerçeği anladı mı?
+
+    public PawnItem(string name, float value, ItemLegality leg)
+    {
+        itemName = name;
+        baseValue = value;
+        legality = leg;
+        isIdentified = false;
+    }
+}
+
+using UnityEngine;
+
+public class TransactionExample : MonoBehaviour
+{
+    private void Start()
+    {
+        // 1. Yeni bir müşteri üret
+        CustomerTraits customerTraits = CustomerGenerator.GenerateRealisticCustomer();
+
+        // 2. Müşterinin getirdiği eşya için risk analizi yap
+        ItemRiskReport risk = ItemRiskEvaluator.EvaluateItem(customerTraits);
+
+        // 3. Eşyayı oluştur
+        PawnItem item = new PawnItem("Altın Rolex Saat", 5000f, risk.legality);
+
+        // Konsol Çıktısı (Debug)
+        Debug.Log($"--- MÜŞTERİ PROFİLİ ---");
+        Debug.Log($"Dürüstlük: {customerTraits.honesty} | Güvenilirlik: {customerTraits.trustworthiness} | Çaresizlik: {customerTraits.desperation}");
+        Debug.Log($"--- RİSK RAPORU ---");
+        Debug.Log($"Sahte Olma Riski: %{risk.fakeChance:F1}");
+        Debug.Log($"Çalıntı Olma Riski: %{risk.stolenChance:F1}");
+        Debug.Log($"Gerçek Durum: <color=yellow>{item.legality}</color>");
+        
+        if (risk.isLyingAboutOrigin)
+        {
+            Debug.Log("<color=red>Müşteri yalan söylüyor:</color> 'Bu saat dedemden yadigâr kaldı, tertemiz ürün.'");
+        }
+        else if (item.legality != ItemLegality.Clean)
+        {
+            Debug.Log("<color=orange>Müşteri tedirgin:</color> 'Faturası yok ama acele elden çıkarmam lazım, sorup durma.'");
+        }
+    }
+}
+
