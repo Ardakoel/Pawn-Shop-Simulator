@@ -1,0 +1,302 @@
+public enum AuthenticityType
+{
+    Authentic,  // %100 Orijinal, fabrikasyon/sanatçı çıkışlı
+    Fake,       // Tamamen sahte, ucuz taklit
+    Replica,    // Birebir kopyalanmış, yüksek kaliteli replika (fark etmesi zordur)
+    Modified,   // Franken/Hibrit: Bazı parçaları orijinal, bazıları sonradan takılma/sahte
+    Stolen,     // Orijinal ama çalıntı (Polis ve yasal risk taşır)
+    Damaged,    // Orijinal fakat gizli ağır yapısal kusuru var (su almış mekanizma, çatlak tuval)
+    Restored,   // Orijinal ama profesyonel olmayan şekilde restore edilmiş (koleksiyon değerini kırar)
+    Unknown     // Henüz ekspertiz yapılmamış, durumu belirsiz
+}
+
+public static class AuthenticityExtensions
+{
+    /// <summary>
+    /// Orijinallik durumunun eşyanın gerçek değerine olan etkisi.
+    /// </summary>
+    public static float GetValueMultiplier(this AuthenticityType type)
+    {
+        switch (type)
+        {
+            case AuthenticityType.Authentic: return 1.0f;
+            case AuthenticityType.Restored:   return 0.70f; // Restorasyon koleksiyon değerini düşürür
+            case AuthenticityType.Stolen:     return 0.85f; // Mal orijinaldir ama kara borsa risk primi yer
+            case AuthenticityType.Modified:   return 0.40f; // Franken eşyalar ciddi değer kaybeder
+            case AuthenticityType.Damaged:    return 0.30f; // Ağır hasarlı
+            case AuthenticityType.Replica:    return 0.15f; // Kaliteli de olsa replika
+            case AuthenticityType.Fake:       return 0.05f; // Neredeyse değersiz
+            case AuthenticityType.Unknown:    return 1.0f;
+            default: return 1.0f;
+        }
+    }
+}
+
+using UnityEngine;
+
+[System.Serializable]
+public class ItemComponentPart
+{
+    public string partName;             // Örn: "Kasa", "İç Mekanizma", "İmza", "Tuval/Kağıt", "Çerçeve"
+    public AuthenticityType realStatus; // Gerçekte ne olduğu (Gizli)
+    public bool isInspected;            // Oyuncu bu parçayı inceledi mi?
+
+    [TextArea(2, 3)]
+    public string flawDescription;      // Kusur varsa açıklaması (Örn: "Mekanizma üzerindeki dişliler pirinç değil, ucuz alaşım.")
+
+    public ItemComponentPart(string name, AuthenticityType status, string flaw = "")
+    {
+        partName = name;
+        realStatus = status;
+        isInspected = false;
+        flawDescription = flaw;
+    }
+}
+
+using System.Collections.Generic;
+using UnityEngine;
+
+public static class AuthenticitySystem
+{
+    /// <summary>
+    /// Parçaların durumuna bakarak eşyanın genel (Overall) orijinallik statüsünü belirler.
+    /// </summary>
+    public static AuthenticityType DetermineOverallAuthenticity(List<ItemComponentPart> parts, bool isStolen)
+    {
+        if (isStolen) return AuthenticityType.Stolen;
+
+        int fakeCount = 0;
+        int authenticCount = 0;
+        int modifiedCount = 0;
+        int restoredCount = 0;
+
+        foreach (var part in parts)
+        {
+            if (part.realStatus == AuthenticityType.Fake || part.realStatus == AuthenticityType.Replica)
+                fakeCount++;
+            else if (part.realStatus == AuthenticityType.Authentic)
+                authenticCount++;
+            else if (part.realStatus == AuthenticityType.Modified)
+                modifiedCount++;
+            else if (part.realStatus == AuthenticityType.Restored)
+                restoredCount++;
+        }
+
+        // Hepsi sahteyse -> Fake
+        if (fakeCount == parts.Count) return AuthenticityType.Fake;
+
+        // Bazıları orijinal bazıları sahteyse (Örn: Rolex kasası orijinal, mekanizma sahte) -> Modified (Franken)
+        if (fakeCount > 0 && authenticCount > 0) return AuthenticityType.Modified;
+
+        // Sadece amatör onarım/restorasyon varsa -> Restored
+        if (restoredCount > 0 && fakeCount == 0) return AuthenticityType.Restored;
+
+        // Hepsi temizse -> Authentic
+        if (authenticCount == parts.Count) return AuthenticityType.Authentic;
+
+        return AuthenticityType.Replica;
+    }
+
+    /// <summary>
+    /// Oyuncu bir parçayı özel bir ekspertiz aracıyla incelediğinde çalışır.
+    /// </summary>
+    public static InspectionReport InspectSpecificPart(ItemComponentPart part, InspectionToolType tool)
+    {
+        part.isInspected = true;
+        InspectionReport report = new InspectionReport();
+
+        if (part.realStatus == AuthenticityType.Authentic)
+        {
+            report.success = true;
+            report.detectedStatus = AuthenticityType.Authentic;
+            report.feedback = $"[{part.partName}]: İnceleme kusursuz. Malzeme kalitesi, damgalar ve işçilik orijinal standartlarda.";
+        }
+        else
+        {
+            report.success = true;
+            report.detectedStatus = part.realStatus;
+            report.feedback = $"<color=red>[KUSUR TESPİT EDİLDİ - {part.partName}]:</color> {part.flawDescription}";
+        }
+
+        return report;
+    }
+}
+
+public struct InspectionReport
+{
+    public bool success;
+    public AuthenticityType detectedStatus;
+    public string feedback;
+}
+
+using System.Collections.Generic;
+using UnityEngine;
+
+public static class ItemBlueprintFactory
+{
+    /// <summary>
+    /// Örnek 1: Dışı Rolex, içi sahte mekanizma (Modified / Frankenwatch)
+    /// </summary>
+    public static List<ItemComponentPart> CreateFrankenRolex()
+    {
+        List<ItemComponentPart> parts = new List<ItemComponentPart>
+        {
+            new ItemComponentPart("Dış Çelik Kasa & Bezel", AuthenticityType.Authentic),
+            new ItemComponentPart("Safir Cam & Kadran", AuthenticityType.Authentic),
+            new ItemComponentPart("Oyster Bilezik / Kordon", AuthenticityType.Authentic),
+            new ItemComponentPart("İç Otomatik Mekanizma (Calibre)", AuthenticityType.Fake, 
+                "Arka kapak açıldığında İsviçre üretimi değil, ucuz seri üretim Çin mekanizması takıldığı görüldü!")
+        };
+
+        return parts;
+    }
+
+    /// <summary>
+    /// Örnek 2: Tuvali ve çerçevesi 1850'lerden kalma ama imzası sahte tablo (Fake / Forgery)
+    /// </summary>
+    public static List<ItemComponentPart> CreateForgedPainting()
+    {
+        List<ItemComponentPart> parts = new List<ItemComponentPart>
+        {
+            new ItemComponentPart("Ahşap Çerçeve", AuthenticityType.Authentic, "Dönemin orijinal ceviz oyması."),
+            new ItemComponentPart("Keten Tuval & Astar", AuthenticityType.Authentic, "19. yüzyıl keten dokuması ve doğal eskime mevcut."),
+            new ItemComponentPart("Ressam İmzası", AuthenticityType.Replica, 
+                "UV ışığı altında incelendiğinde imzanın vernik katmanının ÜSTÜNE sonradan modern pigmentle atıldığı anlaşıldı!")
+        };
+
+        return parts;
+    }
+}
+
+[System.Serializable]
+public class PawnShopItem
+{
+    // ... Önceki alanlar ...
+    public AuthenticityType overallAuthenticity;
+    public List<ItemComponentPart> components = new List<ItemComponentPart>();
+
+    // Genel durumu parçalara göre güncelle
+    public void RefreshAuthenticity(bool isStolen = false)
+    {
+        overallAuthenticity = AuthenticitySystem.DetermineOverallAuthenticity(components, isStolen);
+        CalculateInstanceValue(); // Parçaların durumuna göre fiyatı yeniden hesapla
+    }
+}
+
+using UnityEngine;
+
+public enum ConfrontationReaction
+{
+    GuiltyConfession,   // Suçunu itiraf eder, fiyatta devasa indirim yapar
+    PanickedRun,        // Yakalandığını anlar, eşyayı kapıp dükkandan kaçar
+    InnocentShock,      // Gerçekten haberi yoktur, çok şaşırır ve fiyatı kırar
+    DefensiveBluff      // "Sen anlamıyorsun bu işten!" diyerek inkar eder
+}
+
+public static class ConfrontationSystem
+{
+    /// <summary>
+    /// Oyuncu tespit ettiği kusuru müşterinin yüzüne vurduğunda çalışır.
+    /// </summary>
+    public static ConfrontationReaction ConfrontCustomer(
+        CustomerTraits traits, 
+        ItemComponentPart flawedPart, 
+        ref float currentAskingPrice)
+    {
+        Debug.Log($"<color=orange>[YÜZLEŞME]:</color> Oyuncu kusuru masaya koydu: '{flawedPart.partName}' sahte/kusurlu!");
+
+        // 1. Durum: Müşteri Sahtekar ve Malın Kusurunu Biliyordu (Düşük dürüstlük)
+        if (traits.honesty < 40)
+        {
+            // Aciliyeti ve çaresizliği yüksekse yakalanınca kaçar
+            if (traits.urgency > 70 || traits.trustworthiness < 30)
+            {
+                Debug.Log("<color=red>[PANİK]:</color> Müşteri kekeledi: 'B-ben bir düşüneyim...' Eşyayı alıp kaçtı!");
+                return ConfrontationReaction.PanickedRun;
+            }
+            // Gururluysa inkar eder ve blöf yapar
+            else if (traits.pride > 65)
+            {
+                Debug.Log("<color=yellow>[BLÖF]:</color> 'Sen bu işten zerre anlamıyorsun! Başka dükkana giderim!'");
+                return ConfrontationReaction.DefensiveBluff;
+            }
+            // Çaresizse suçunu kabul eder ve fiyatı öldürür
+            else
+            {
+                currentAskingPrice *= 0.35f; // Fiyatı %65 aşağı çeker
+                Debug.Log($"<color=cyan>[İTİRAF]:</color> 'Tamam usta yakaladın... {currentAskingPrice:N0}$ ver el sıkışalım, başımı ağrıtma.'");
+                return ConfrontationReaction.GuiltyConfession;
+            }
+        }
+        // 2. Durum: Masum Vatandaş (Dolandırıldığından haberi yok)
+        else
+        {
+            currentAskingPrice *= 0.50f; // Şok olur, fiyatı yarıya indirir
+            Debug.Log($"<color=cyan>[ŞOK]:</color> 'Nasıl yani?! Babam bunu orijinal diye saklardı... İnanamıyorum. Madem öyle bari {currentAskingPrice:N0}$ ver.'");
+            return ConfrontationReaction.InnocentShock;
+        }
+    }
+}
+
+
+using UnityEngine;
+
+public class TimedInspectionManager : MonoBehaviour
+{
+    /// <summary>
+    /// Eşyayı incelerken müşterinin sabrını tüketir.
+    /// </summary>
+    public static bool PerformInspection(
+        PawnShopItem item, 
+        int partIndex, 
+        InspectionToolType tool, 
+        CustomerData customer, 
+        ref int currentStrikes)
+    {
+        if (partIndex < 0 || partIndex >= item.components.Count) return false;
+
+        ItemComponentPart part = item.components[partIndex];
+        
+        // Ekspertiz sonucunu al
+        InspectionReport report = AuthenticitySystem.InspectSpecificPart(part, tool);
+        Debug.Log(report.feedback);
+
+        // Müşterinin sabır kontrolü:
+        // Sabırsız ve acelesi olan müşteri incelenmekten nefret eder
+        if (customer.traits.urgency > 60 || customer.patienceType == PatienceType.Impatient)
+        {
+            currentStrikes--;
+            Debug.Log($"<color=grey>[Müşteri Sabırsızlanıyor]: 'Daha ne kadar evirip çevireceksin?' (Kalan Sabır: {currentStrikes})</color>");
+        }
+
+        return report.detectedStatus != AuthenticityType.Authentic;
+    }
+}
+
+using UnityEngine;
+
+public static class ShowcaseResaleSystem
+{
+    /// <summary>
+    /// Vitrindeki eşyayı almak isteyen bir alıcı müşteri teklif verir.
+    /// </summary>
+    public static float GenerateBuyerOffer(PawnShopItem item, CustomerTraits buyerTraits)
+    {
+        // Alıcı eşyanın durumunu ne kadar biliyor?
+        float perceivedValue = item.currentMarketValue;
+
+        // Alıcı zengin ve açgözlüyse veya koleksiyoncuysa piyasa değerinin üstünü verebilir
+        if (buyerTraits.itemAttachment > 70 || buyerTraits.needMoney < 30)
+        {
+            perceivedValue *= (1.15f + (buyerTraits.greed * 0.002f));
+        }
+        else
+        {
+            // Sıkı pazarlıkçı alıcı ucuza kapatmak ister
+            perceivedValue *= (0.85f - (buyerTraits.hagglingSkill * 0.002f));
+        }
+
+        return Mathf.Round(perceivedValue);
+    }
+}
+
