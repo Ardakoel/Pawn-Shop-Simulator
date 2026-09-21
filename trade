@@ -1,0 +1,329 @@
+using UnityEngine;
+
+public enum MarketDemand
+{
+    VeryLow,   // Talep ölü (Çarpan: 0.6)
+    Low,       // Düşük talep (Çarpan: 0.8)
+    Normal,    // Standart (Çarpan: 1.0)
+    High,      // Popüler / Aranan (Çarpan: 1.25)
+    Trending   // Trend / Aşırı revaçta (Çarpan: 1.5)
+}
+
+public static class ItemValuationSystem
+{
+    // -------------------------------------------------------------
+    // 1. ADIM: EŞYANIN GERÇEK PİYASA DEĞERİNİ HESAPLAMA (OBJEKTİF)
+    // -------------------------------------------------------------
+    // Formül: BaseValue * Condition * Rarity * Authenticity * Demand
+    public static float CalculateTrueMarketValue(PawnShopItem item, MarketDemand demand = MarketDemand.Normal)
+    {
+        float baseVal = item.template.baseValue;
+
+        // Kondisyon Çarpanı
+        float conditionMultiplier = GetConditionMultiplier(item.condition);
+
+        // Nadirlik Çarpanı
+        float rarityMultiplier = GetRarityMultiplier(item.template.rarity);
+
+        // Orijinallik Çarpanı
+        float authenticityMultiplier = GetAuthenticityMultiplier(item.authenticity);
+
+        // Piyasa Talebi Çarpanı
+        float demandMultiplier = GetDemandMultiplier(demand);
+
+        // Net Gerçek Değer
+        float trueValue = baseVal * conditionMultiplier * rarityMultiplier * authenticityMultiplier * demandMultiplier;
+
+        // Taban/Tavan koruması (ItemData sınırlarına göre)
+        return Mathf.Clamp(trueValue, item.template.minValue, item.template.maxValue * demandMultiplier);
+    }
+
+    // -------------------------------------------------------------
+    // 2. ADIM: MÜŞTERİNİN KABUL EDECEĞİ EN DİP FİYAT (SÜBJEKTİF)
+    // -------------------------------------------------------------
+    /// <summary>
+    /// Eşyanın gerçek değerini müşterinin karakteriyle harmanlar.
+    /// "Hemen satan" dip fiyata razı olurken, "Tok satıcı" piyasa değerinin altına inmez.
+    /// </summary>
+    public static float CalculateCustomerFloorPrice(float trueMarketValue, CustomerTraits traits)
+    {
+        // 1. Aciliyet & Sıkışmışlık (Hemen Satma Baskısı)
+        // Borç, aciliyet, nakit ihtiyacı ve çaresizlik fiyatı AŞAĞI çeker.
+        float urgencyScore = (traits.urgency * 0.35f) + 
+                             (traits.desperation * 0.30f) + 
+                             (traits.needMoney * 0.20f) + 
+                             (traits.debt * 0.15f); // 0 - 100 arası
+
+        // 2. Tok Satıcılık & Direnç Faktörü
+        // Gurur, açgözlülük, eşyaya duygusal bağ ve malın değerini bilme fiyatı YUKARI iter.
+        float holdOutScore = (traits.pride * 0.35f) + 
+                             (traits.greed * 0.30f) + 
+                             (traits.itemAttachment * 0.20f) + 
+                             (traits.itemKnowledge * 0.15f); // 0 - 100 arası
+
+        // 3. İki tarafın psikolojik savaşı (-100 ile +100 arası net denge)
+        float psychologicalBalance = holdOutScore - urgencyScore;
+
+        // Çarpan Eğrisi:
+        // En çaresiz/hemen satan (psychologicalBalance ≈ -100): Taban değerin %35'ine kadar düşer.
+        // Dengeli / Normal müşteri (psychologicalBalance ≈ 0): Taban değerin %80-%85'inde durur.
+        // Aşırı tok satıcı (psychologicalBalance ≈ +100): Piyasa değerinin %115'inden aşağı inmez!
+        float customerMultiplier = 0.85f + (psychologicalBalance / 100f) * 0.40f;
+
+        // Güvenlik sınırları: En ölücü bile %30'un altına düşmesin, en tok satıcı da %130'un üstüne çıkmasın
+        customerMultiplier = Mathf.Clamp(customerMultiplier, 0.30f, 1.30f);
+
+        return Mathf.Round(trueMarketValue * customerMultiplier);
+    }
+
+    // -------------------------------------------------------------
+    // ÇARPAN MATRİS YARDIMCILARI
+    // -------------------------------------------------------------
+    private static float GetConditionMultiplier(ItemCondition condition)
+    {
+        switch (condition)
+        {
+            case ItemCondition.Broken: return 0.30f;
+            case ItemCondition.Poor:   return 0.60f;
+            case ItemCondition.Fair:   return 0.80f;
+            case ItemCondition.Good:   return 1.00f;
+            case ItemCondition.Mint:   return 1.25f;
+            default: return 1.0f;
+        }
+    }
+
+    private static float GetRarityMultiplier(ItemRarity rarity)
+    {
+        switch (rarity)
+        {
+            case ItemRarity.Common:    return 1.00f;
+            case ItemRarity.Uncommon:  return 1.20f;
+            case ItemRarity.Rare:      return 1.45f;
+            case ItemRarity.Epic:      return 1.80f;
+            case ItemRarity.Legendary: return 2.50f;
+            default: return 1.0f;
+        }
+    }
+
+    private static float GetAuthenticityMultiplier(ItemAuthenticity auth)
+    {
+        switch (auth)
+        {
+            case ItemAuthenticity.Authentic:   return 1.00f;
+            case ItemAuthenticity.Stolen:       return 0.90f; // Sıcak mal, piyasa değeri korunur ama riskli
+            case ItemAuthenticity.Counterfeit:  return 0.10f; // Sahteyse gerçek piyasa değeri neredeyse sıfırdır
+            default: return 1.0f;
+        }
+    }
+
+    private static float GetDemandMultiplier(MarketDemand demand)
+    {
+        switch (demand)
+        {
+            case MarketDemand.VeryLow:  return 0.60f;
+            case MarketDemand.Low:      return 0.80f;
+            case MarketDemand.Normal:   return 1.00f;
+            case MarketDemand.High:     return 1.25f;
+            case MarketDemand.Trending: return 1.50f;
+            default: return 1.0f;
+        }
+    }
+}
+
+using UnityEngine;
+
+public enum InspectionToolType
+{
+    MagnifyingGlass, // Büyüteç: Kondisyon ve aşınmaları netleştirir
+    UVLight,         // UV Işığı: Sahtelik ve imza/filigran kontrolü
+    AcidScaleKit,    // Asit & Hassas Terazi: Değerli maden doğrulaması
+    PoliceDatabase   // Bilgisayar / Seri No Sorgusu: Çalıntı kontrolü
+}
+
+[System.Serializable]
+public class InspectionClue
+{
+    public string description;      // Örn: "Kadrandaki font orijinalinden farklı."
+    public bool revealsAuthenticity;
+    public bool revealsCondition;
+    public bool revealsPersonality; // Müşterinin açığını yakalama (Örn: "Elleri titriyor, acelesi var.")
+}
+
+using UnityEngine;
+
+public enum InspectionToolType
+{
+    MagnifyingGlass, // Büyüteç: Kondisyon ve aşınmaları netleştirir
+    UVLight,         // UV Işığı: Sahtelik ve imza/filigran kontrolü
+    AcidScaleKit,    // Asit & Hassas Terazi: Değerli maden doğrulaması
+    PoliceDatabase   // Bilgisayar / Seri No Sorgusu: Çalıntı kontrolü
+}
+
+[System.Serializable]
+public class InspectionClue
+{
+    public string description;      // Örn: "Kadrandaki font orijinalinden farklı."
+    public bool revealsAuthenticity;
+    public bool revealsCondition;
+    public bool revealsPersonality; // Müşterinin açığını yakalama (Örn: "Elleri titriyor, acelesi var.")
+}
+
+
+using UnityEngine;
+
+public class PawnGameManager : MonoBehaviour
+{
+    public static PawnGameManager Instance { get; private set; }
+
+    [Header("Oyuncu Durumu")]
+    public float playerCash = 15000f; // Oyuncunun mevcut parası
+    public int shopReputation = 50;   // Dükkanın itibarı (0 - 100)
+
+    [Header("Mevcut Tezgâh Masası")]
+    public CustomerData currentCustomer;
+    public PawnShopItem currentItem;
+    public MarketDemand currentMarketDemand = MarketDemand.Normal;
+
+    private int customerStrikesLeft;
+    private float currentAskingPrice;
+    private float customerFloorPrice;
+    private float trueMarketValue;
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+    }
+
+    private void Start()
+    {
+        // Oyunu ilk müşteriyle başlat
+        SpawnNextCustomer();
+    }
+
+    /// <summary>
+    /// Tezgaha yeni bir müşteri ve rastgele durumdaki bir eşya getirir.
+    /// </summary>
+    public void SpawnNextCustomer()
+    {
+        // 1. Müşteriyi ve kişiliğini üret
+        currentCustomer = CustomerPoolManager.Instance.GenerateRandomCustomer();
+
+        // 2. Risk faktörlerine göre eşyanın yasallık durumunu hesapla
+        ItemRiskReport risk = ItemRiskEvaluator.EvaluateItem(currentCustomer.traits);
+
+        // 3. Örnek bir eşya şablonu oluştur (Projende Resources veya asset referansından gelir)
+        ItemData template = ScriptableObject.CreateInstance<ItemData>();
+        template.itemID = "ROLEX_SUB_01";
+        template.itemName = "Rolex Submariner";
+        template.category = ItemCategory.Watch;
+        template.baseValue = 8000f;
+        template.minValue = 1500f;
+        template.maxValue = 12000f;
+        template.rarity = ItemRarity.Rare;
+
+        // Rastgele kondisyon
+        ItemCondition randomCond = (ItemCondition)Random.Range(1, 5); // Poor ile Mint arası
+        string serialNo = "SN-" + Random.Range(100000, 999999);
+
+        // 4. Somut eşyayı oluştur
+        currentItem = new PawnShopItem(template, randomCond, risk.legality, serialNo);
+
+        // 5. Değer Matrisini ve Müşterinin Psikolojik Tabanını Hesapla
+        trueMarketValue = ItemValuationSystem.CalculateTrueMarketValue(currentItem, currentMarketDemand);
+        customerFloorPrice = ItemValuationSystem.CalculateCustomerFloorPrice(trueMarketValue, currentCustomer.traits);
+
+        // Sabır vuruş hakkı
+        customerStrikesLeft = Mathf.Clamp(currentCustomer.traits.patience / 20, 1, 5);
+
+        // Açılış fiyatı (Açgözlülük oranında tabanın üstünden başlar)
+        float markup = 1.15f + (currentCustomer.traits.greed * 0.003f);
+        currentAskingPrice = Mathf.Round(trueMarketValue * markup);
+
+        // Diyalog
+        string greeting = CustomerDialogueDatabase.GetEntryGreeting(currentCustomer.traits, currentItem.customName);
+
+        Debug.Log("==================================================");
+        Debug.Log($"<color=cyan>[YENİ MÜŞTERİ]:</color> {currentCustomer.fullName} ({currentCustomer.patienceType})");
+        Debug.Log($"<color=white>[DİYALOG]:</color> \"{greeting}\"");
+        Debug.Log($"İstediği Fiyat: {currentAskingPrice:N0}$");
+        Debug.Log($"<color=grey>[GİZLİ GÖZLEMCİ]: Gerçek Değer: {trueMarketValue:N0}$ | Müşterinin İneneceği Dip: {customerFloorPrice:N0}$</color>");
+        Debug.Log("==================================================");
+    }
+
+    /// <summary>
+    /// Oyuncu teklif verdiğinde çalışır.
+    /// </summary>
+    public void MakeOffer(float offer)
+    {
+        if (offer > playerCash)
+        {
+            Debug.Log("<color=red>Kasanızda bu kadar nakit yok!</color>");
+            return;
+        }
+
+        // 1. Teklif taban fiyatı karşılıyor mu?
+        if (offer >= customerFloorPrice)
+        {
+            CompletePurchase(offer);
+            return;
+        }
+
+        // 2. Hakaret kontrolü (Kibirli müşteri ölü fiyata tahammül etmez)
+        float ratio = offer / customerFloorPrice;
+        if (ratio < 0.50f && currentCustomer.traits.pride > 65)
+        {
+            Debug.Log($"<color=red>[{currentCustomer.fullName}]:</color> 'Sen benim aklımla dalga mı geçiyorsun?!' Masayı terk etti.");
+            CloseSession();
+            return;
+        }
+
+        // 3. Sabır tüketimi ve karşı teklif
+        customerStrikesLeft--;
+        if (customerStrikesLeft <= 0)
+        {
+            Debug.Log($"<color=orange>[{currentCustomer.fullName}]:</color> 'Vaktimi çaldın. Anlaşamayacağız.' Çekip gitti.");
+            CloseSession();
+            return;
+        }
+
+        // Karşı teklif: Müşteri fiyatı biraz kırar
+        float stepDiscount = (100 - currentCustomer.traits.hagglingSkill) * 0.0015f + 0.04f;
+        currentAskingPrice = Mathf.Max(customerFloorPrice, Mathf.Round(currentAskingPrice * (1f - stepDiscount)));
+
+        Debug.Log($"<color=yellow>[{currentCustomer.fullName}]:</color> 'Teklifin çok düşük. En son {currentAskingPrice:N0}$ yaparım.' (Kalan Sabır: {customerStrikesLeft})");
+    }
+
+    /// <summary>
+    /// Satın alma işlemi gerçekleştiğinde çağrılır.
+    /// </summary>
+    private void CompletePurchase(float agreedPrice)
+    {
+        playerCash -= agreedPrice;
+        Debug.Log($"<color=green>[ANLAŞMA SAĞLANDI]:</color> {currentItem.customName} {agreedPrice:N0}$ karşılığında satın alındı!");
+
+        // Çalıntı mal aldıysa itibar veya polis riski
+        if (currentItem.authenticity == ItemAuthenticity.Stolen)
+        {
+            shopReputation -= 15;
+            Debug.Log("<color=red>[RİSK]:</color> Çalıntı bir eşya aldınız! Dükkanın itibarı zedelendi.");
+        }
+        else if (currentItem.authenticity == ItemAuthenticity.Counterfeit)
+        {
+            Debug.Log("<color=orange>[ZARAR]:</color> Sahte bir ürün aldınız, elinizde patlayabilir!");
+        }
+        else
+        {
+            shopReputation += 2;
+        }
+
+        CloseSession();
+    }
+
+    private void CloseSession()
+    {
+        Debug.Log($"Kalan Nakit: {playerCash:N0}$ | Dükkan İtibarı: {shopReputation}");
+        Debug.Log("--- Sıradaki müşteriyi çağırmak için SpawnNextCustomer() çalıştırabilirsiniz. ---");
+    }
+}
+
