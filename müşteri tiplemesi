@@ -1,0 +1,239 @@
+using System;
+using UnityEngine;
+
+public enum Gender
+{
+    Male,
+    Female
+}
+
+public enum PatienceType
+{
+    Impatient, // Sabırsız: Ters bir teklifte anında masadan kalkar, toleransı çok dar
+    Moderate,  // Orta: Birkaç karşı teklife dayanır, mantıklı pazarlık yapar
+    Patient    // Sabırlı: Çoklu tekliflere açık, esnek tolerans aralığı var
+}
+
+[System.Serializable]
+public class CustomerData
+{
+    public string fullName;
+    public Gender gender;
+    public PatienceType patienceType;
+
+    // Sabır / Dayanıklılık Değerleri
+    public int maxPatienceStrikes; // Kaç kötü teklife dayanabilir
+    public int currentPatienceStrikes;
+
+    // Fiyat toleransı (Örn: Sabırlı %25 esnerken, sabırsız %5 esner)
+    public float priceToleranceRatio;
+
+    public CustomerData(string name, Gender gen, PatienceType patience)
+    {
+        fullName = name;
+        gender = gen;
+        patienceType = patience;
+
+        // Sabır tipine göre değişkenleri ayarla
+        switch (patienceType)
+        {
+            case PatienceType.Impatient:
+                maxPatienceStrikes = 1;         // Tek bir kötü teklifte çeker gider
+                priceToleranceRatio = 0.05f;    // En fazla %5 indirim/artış kabul eder
+                break;
+
+            case PatienceType.Moderate:
+                maxPatienceStrikes = 3;         // 2-3 tur pazarlık yapar
+                priceToleranceRatio = 0.15f;    // %15 esneme payı
+                break;
+
+            case PatienceType.Patient:
+                maxPatienceStrikes = 5;         // 5 tura kadar dayanır
+                priceToleranceRatio = 0.25f;    // %25 esneme payı
+                break;
+        }
+
+        currentPatienceStrikes = maxPatienceStrikes;
+    }
+
+    /// <summary>
+    /// Oyuncunun sunduğu teklifi müşterinin sabır ve toleransına göre değerlendirir.
+    /// </summary>
+    /// <param name="offeredPrice">Oyuncunun istediği / teklif ettiği fiyat</param>
+    /// <param name="basePrice">Ürünün/hizmetin liste fiyatı</param>
+    /// <returns>Teklif kabul edildi mi, pazarlık sürüyor mu, yoksa müşteri gitti mi?</returns>
+    public NegotiationResult EvaluateOffer(float offeredPrice, float basePrice)
+    {
+        // Kabul edilebilir tavan fiyat
+        float acceptableMaxPrice = basePrice * (1f + priceToleranceRatio);
+
+        // Teklif makul sınırlar içindeyse kabul et
+        if (offeredPrice <= acceptableMaxPrice)
+        {
+            return NegotiationResult.Accepted;
+        }
+
+        // Teklif çok yüksek/kötü -> Sabır tüket
+        currentPatienceStrikes--;
+
+        if (currentPatienceStrikes <= 0)
+        {
+            return NegotiationResult.WalkedAway; // Sabır bitti, dükkandan/masadan ayrıldı
+        }
+
+        return NegotiationResult.CounterOfferNeeded; // Hala sabrı var, pazarlık devam ediyor
+    }
+}
+
+public enum NegotiationResult
+{
+    Accepted,
+    CounterOfferNeeded,
+    WalkedAway
+}
+
+using System.Collections.Generic;
+using UnityEngine;
+
+public class CustomerPoolManager : MonoBehaviour
+{
+    public static CustomerPoolManager Instance { get; private set; }
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+    }
+
+    #region İsim Havuzları (Amerikan / Latin / Afrika / Asya Popüler Karması)
+
+    // Toplam 100 Erkek İsmi
+    private readonly string[] maleFirstNames = new string[]
+    {
+        // Klasik & Modern Amerikan
+        "James", "Robert", "John", "Michael", "David", "William", "Richard", "Joseph", "Thomas", "Charles",
+        "Christopher", "Daniel", "Matthew", "Anthony", "Mark", "Steven", "Andrew", "Joshua", "Kevin", "Brian",
+        "Liam", "Noah", "Oliver", "Lucas", "Benjamin", "Ethan", "Henry", "Alexander", "Mason", "Jack",
+        
+        // Latin / İspanyol Kökenli
+        "Mateo", "Santiago", "Sebastian", "Alejandro", "Carlos", "Diego", "Gabriel", "Manuel", "Adrian", "Angel",
+        "Jose", "Juan", "Luis", "Javier", "Emiliano", "Miguel", "Rafael", "Leonardo", "Fernando", "Nicolas",
+        "Eduardo", "Lorenzo", "Thiago", "Matias", "Julian",
+        
+        // Afrika & Afro-Amerikan Kökenli
+        "Malik", "Jamal", "Darius", "Kofi", "Kwame", "Tariq", "Hassan", "Jabari", "Amari", "Rashad",
+        "Devonte", "Terrence", "Marquis", "Kendrick", "Lamar", "Kareem", "Zuberi", "Jelani", "Omari", "Sekou",
+        "Idris", "Tremaine", "DeAndre", "Demarcus", "Akil",
+        
+        // Asya (Doğu, Güney & Güneydoğu Asya) Kökenli
+        "Liam", "Kai", "Wei", "Jun", "Jin", "Min-jun", "Kenji", "Hiroshi", "Ren", "Arjun",
+        "Aarav", "Rohan", "Dev", "Vihaan", "Aditya", "Nguyen", "Bao", "Tenzin", "Ravi", "Siddharth",
+        "Hao", "Yuto", "Sora", "Chen", "Bo"
+    };
+
+    // Toplam 100 Kadın İsmi
+    private readonly string[] femaleFirstNames = new string[]
+    {
+        // Klasik & Modern Amerikan
+        "Mary", "Patricia", "Jennifer", "Linda", "Elizabeth", "Barbara", "Susan", "Jessica", "Sarah", "Karen",
+        "Emily", "Emma", "Olivia", "Ava", "Sophia", "Isabella", "Mia", "Charlotte", "Amelia", "Harper",
+        "Evelyn", "Abigail", "Emily", "Ella", "Madison", "Chloe", "Grace", "Avery", "Zoey", "Hannah",
+        
+        // Latin / İspanyol Kökenli
+        "Sofia", "Camila", "Valentina", "Isabella", "Mariana", "Lucia", "Elena", "Daniela", "Gabriela", "Carmen",
+        "Catalina", "Valeria", "Rosa", "Maria", "Juana", "Ximena", "Paula", "Jimena", "Adriana", "Alondra",
+        "Estrella", "Fernanda", "Esperanza", "Guadalupe", "Lourdes",
+        
+        // Afrika & Afro-Amerikan Kökenli
+        "Aaliyah", "Imani", "Zendaya", "Keisha", "Ebony", "Nia", "Shaniqua", "Fatima", "Amina", "Zola",
+        "Makena", "Ayanna", "Zuri", "Tamika", "Latoya", "Folami", "Khadija", "Tia", "Monique", "Kendra",
+        "Nailah", "Rashida", "Zahara", "Sanaa", "Bintu",
+        
+        // Asya (Doğu, Güney & Güneydoğu Asya) Kökenli
+        "Mei", "Lin", "Yuki", "Hana", "Sakura", "Aoi", "Ji-woo", "Seo-yeon", "Ananya", "Diya",
+        "Isha", "Priya", "Aarohi", "Linh", "Mai", "Tara", "Sun-hee", "Haruki", "Kavya", "Thao",
+        "Li", "Jia", "Anika", "Shreya", "Rin"
+    };
+
+    // 100 Farklı Kökenli Soyisim
+    private readonly string[] lastNames = new string[]
+    {
+        // Amerikan / Anglo
+        "Smith", "Johnson", "Williams", "Brown", "Jones", "Miller", "Davis", "Wilson", "Anderson", "Taylor",
+        "Thomas", "Moore", "Jackson", "Martin", "Lee", "Harris", "Clark", "Lewis", "Robinson", "Walker",
+        "Hall", "Young", "Allen", "King", "Wright",
+        
+        // Latin / İspanyol
+        "Garcia", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez", "Perez", "Sanchez", "Ramirez", "Torres",
+        "Flores", "Rivera", "Gomez", "Diaz", "Reyes", "Morales", "Ortiz", "Gutierrez", "Castro", "Chavez",
+        "Vargas", "Ramos", "Mendoza", "Cruz", "Castillo",
+        
+        // Afrika / Afro-Amerikan
+        "Washington", "Jefferson", "Freeman", "Banks", "Booker", "Mensah", "Okafor", "Adeyemi", "Diallo", "Traore",
+        "Sow", "Diop", "Toure", "Kone", "Boateng", "Osei", "Owusu", "Kamara", "Banda", "Nkosi",
+        "Kalu", "Baloyi", "Jalloh", "Keita", "Moyo",
+        
+        // Asya (Çin, Kore, Japon, Hint, Vietnam)
+        "Wang", "Li", "Zhang", "Liu", "Chen", "Yang", "Huang", "Kim", "Park", "Choi",
+        "Nguyen", "Tran", "Le", "Pham", "Sato", "Suzuki", "Takahashi", "Tanaka", "Watanabe", "Patel",
+        "Sharma", "Singh", "Kumar", "Gupta", "Shah"
+    };
+
+    #endregion
+
+    /// <summary>
+    /// Havuzdan tamamen rastgele yeni bir müşteri üretir.
+    /// </summary>
+    public CustomerData GenerateRandomCustomer()
+    {
+        // 1. Cinsiyet seçimi (%50 - %50)
+        Gender gender = (Random.value > 0.5f) ? Gender.Male : Gender.Female;
+
+        // 2. İsim ve Soyisim seçimi
+        string firstName = (gender == Gender.Male) 
+            ? maleFirstNames[Random.Range(0, maleFirstNames.Length)]
+            : femaleFirstNames[Random.Range(0, femaleFirstNames.Length)];
+
+        string lastName = lastNames[Random.Range(0, lastNames.Length)];
+        string completeName = $"{firstName} {lastName}";
+
+        // 3. Sabır tipi belirleme (%33 eşit dağılım veya isteğe göre ağırlıklı)
+        PatienceType patience = (PatienceType)Random.Range(0, 3);
+
+        return new CustomerData(completeName, gender, patience);
+    }
+}
+
+using UnityEngine;
+
+public class ShopTest : MonoBehaviour
+{
+    private void Start()
+    {
+        // Yeni bir müşteri oluştur
+        CustomerData customer = CustomerPoolManager.Instance.GenerateRandomCustomer();
+        Debug.Log($"Müşteri Geldi: {customer.fullName} | Cinsiyet: {customer.gender} | Sabır Tipi: {customer.patienceType}");
+
+        float baseItemPrice = 100f; // Ürünün gerçek fiyatı
+        float myOffer = 130f;       // Bizim istediğimiz yüksek fiyat
+
+        // Pazarlık teklifi yap
+        NegotiationResult result = customer.EvaluateOffer(myOffer, baseItemPrice);
+
+        switch (result)
+        {
+            case NegotiationResult.Accepted:
+                Debug.Log($"{customer.fullName}: Fiyat bana uygun, anlaştık!");
+                break;
+
+            case NegotiationResult.CounterOfferNeeded:
+                Debug.Log($"{customer.fullName}: Bu fiyat biraz fazla. Daha iyi bir teklifin var mı? (Kalan Sabır: {customer.currentPatienceStrikes})");
+                break;
+
+            case NegotiationResult.WalkedAway:
+                Debug.Log($"{customer.fullName}: Bu fiyata asla almam, gidiyorum! (Dükkanı terk etti)");
+                break;
+        }
+    }
+}
+
