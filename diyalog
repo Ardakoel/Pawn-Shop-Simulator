@@ -1,0 +1,480 @@
+using System.Collections.Generic;
+using UnityEngine;
+
+public enum DialogueContext
+{
+    Greeting,           // Dükkana ilk giriş ve eşyayı masaya koyuş
+    CounterOffer,       // Fiyat kırmayı reddetme / karşı teklif sunma
+    LowballRejection,   // Çok düşük teklife sert tepki
+    LosingPatience,     // Sabrın tükenmek üzere olduğu an
+    DealAccepted,       // Satışta el sıkışma anı
+    WalkAway            // Masayı terk ediş
+}
+
+public static class DialogueSystem
+{
+    // =========================================================================
+    // 1. GİRİŞ VE EŞYAYI SUNUŞ CÜMLELERİ (GREETING)
+    // =========================================================================
+
+    // Borçlu + Acil Nakit (Debt > 70 & NeedMoney > 70 & Urgency > 65)
+    private static readonly string[] DesperateGreetingLines = new string[]
+    {
+        "Bakın, gerçekten acil paraya ihtiyacım var... Şuna bir fiyat biçin, hemen halledelim.",
+        "Tefeciler/banka kapımda bekliyor dostum. Bu eşyayı bugün elden çıkarmam şart.",
+        "Normalde kapısından geçmem ama mecbur kaldım. Bana hızlı ve nakit bir şey ver, uzatmayalım.",
+        "Zamanım daralıyor, akşama kadar bu parayı denkleştirmem lazım. Ne verirsin buna?",
+        "Kafam kazan gibi, faturalar birikti. Şunu al da önüme bakayım, ne kadar dersin?"
+    };
+
+    // Tok Satıcı / Kibirli (Pride > 70 & NeedMoney < 40)
+    private static readonly string[] ProudSellerGreetingLines = new string[]
+    {
+        "Bunun ne olduğunu ve piyasa değerini gayet iyi biliyorum. Komik rakamlarla vaktimi alma.",
+        "Paraya sıkışmış biri değilim, baştan söyleyeyim. Hak ettiği değeri verirsen el sıkışırız.",
+        "Koleksiyonumun nadide parçalarından biridir. Kıymetini bilecek bir esnafa bırakmak istedim.",
+        "Acelem yok, satılmazsa evimin başköşesinde durmaya devam eder. Fiyatın nedir?",
+        "Sıradan rehin dükkanı müşterilerine benzemem. Masadaki mal konuşsun, buyrun inceleyin."
+    };
+
+    // Eşyaya Duygusal Bağ (ItemAttachment > 75)
+    private static readonly string[] AttachedGreetingLines = new string[]
+    {
+        "Babam bunu bana ölmeden önce vermişti... Buraya getirmek bile canımı yakıyor.",
+        "Çocukluğumdan beri odamın başköşesinde dururdu. Maddi değil, manevi değeri biçilemez.",
+        "Bunu satmak aileme ihanet gibi geliyor ama şartlar işte... Lütfen iyi bakacak birine verin.",
+        "Yıllardır gözüm gibi sakladığım yadigârım. Hak ettiği değeri görmezse geri götürürüm.",
+        "Bunun her çiziğinde ayrı bir anım var. Lütfen ona sıradan bir hurda gibi davranmayın."
+    };
+
+    // Şüpheli / Sahtekar Eğilimli (Honesty < 35 & Greed > 65)
+    private static readonly string[] ShadyGreetingLines = new string[]
+    {
+        "Kutusunu, faturasını falan sorma; oraları karıştırma. Mal ortada, sıcak para masada olsun yeter.",
+        "Eski bir ahbaptan geçti elime. Temiz, sağlam iş. Sağlam bir para say, ikimiz de kazanalım.",
+        "Hızlı bir ticaret olsun istiyorum. İnce eleyip sık dokumayı sevmem, peşin fiyatın ne?",
+        "Gözün mal görsün usta. Piyasada bundan bulamazsın. Alıp hemen iki katına okutursun, anla işte."
+    };
+
+    // Bilgili / Usta Esnaf Müşteri (ItemKnowledge > 80 & HagglingSkill > 70)
+    private static readonly string[] SavvyGreetingLines = new string[]
+    {
+        "Dönemini, seri numarasını ve kondisyonunu araştırıp geldim. İkimiz de esnafız, dürüst başlayalım.",
+        "Piyasadaki son müzayede satışlarını biliyorum. Birbirimizi kandırmadan adil bir açılış yapalım.",
+        "Kondisyonu 'Mint' ayarında. İlgili koleksiyonerlerin ne kadar ödediğini sen de biliyorsun, ben de."
+    };
+
+    // Nötr / Standart Müşteri
+    private static readonly string[] NeutralGreetingLines = new string[]
+    {
+        "İyi günler. Evde yer açmak için birkaç parça eşyayı satıyorum, buna ne kadar verirsiniz?",
+        "Selamlar. Artık kullanmadığım bir eşya, dükkanınızda değerlendirmek istedim.",
+        "Merhaba usta. Şu eşyaya bir göz atabilir misin? Uygun bir teklifin varsa bırakırım."
+    };
+
+    // =========================================================================
+    // 2. PAZARLIK VE KARŞI TEKLİF DİYALOGLARI (COUNTER-OFFER)
+    // =========================================================================
+
+    private static readonly string[] DesperateCounterLines = new string[]
+    {
+        "Yapma usta, bu para borcuma yetmiyor bile! Biraz daha yukarı çık, yalvarırım.",
+        "Zaten canım burnumda, bari yol paramı bırak... Biraz daha artır şu teklifi.",
+        "Çok öldürdün be abi... Tamam sıkıştık dedik de bu kadar da ezme bizi."
+    };
+
+    private static readonly string[] ProudCounterLines = new string[]
+    {
+        "Bu rakam resmen hakaret. Ben buraya sadaka istemeye gelmedim, son fiyatım bu.",
+        "Gülünç olmayın. Bu parçanın piyasası belli. İneneceğim sınır budur, fazlasını bekleme.",
+        "Esnaflığınıza yakışmadı. Bu mal bu fiyata verilmez. Teklifim budur, düşünün."
+    };
+
+    private static readonly string[] AttachedCounterLines = new string[]
+    {
+        "Maneviyatını bir kenara bıraksam bile bu teklif çok az. Yadigârımı bu fiyata çiğnetmem.",
+        "İçim parçalanıyor zaten, bari değsin sattığıma... Biraz daha yukarı çıkamaz mısın?"
+    };
+
+    // =========================================================================
+    // 3. SABIR TÜKENİRKEN VE REST ÇEKERKEN (LOSING PATIENCE / FINAL)
+    // =========================================================================
+
+    private static readonly string[] ImpatientWarningLines = new string[]
+    {
+        "Vaktimi çalıyorsun! Son kez söylüyorum, alıyor musun yoksa kalkayım mı?",
+        "Bütün gün seninle pazarlık yapamam. Ya bu parayı verirsin ya da giderim!",
+        "Boş lafa karnım tok. Masadaki son rakamım budur, evet mi hayır mı?"
+    };
+
+    // =========================================================================
+    // 4. ANLAŞMA SAĞLANDIĞINDA (DEAL ACCEPTED)
+    // =========================================================================
+
+    private static readonly string[] DesperateAcceptedLines = new string[]
+    {
+        "Çok şükür... Say parayı usta, bu beni birkaç gün idare eder en azından.",
+        "Sonunda be... Gerçekten çok daralmıştım, sağ olasın."
+    };
+
+    private static readonly string[] ProudAcceptedLines = new string[]
+    {
+        "Makul bir noktada buluştuk. Malın kıymetini bilecek birine satarsınız umarım.",
+        "Kabul edilebilir bir seviyeye geldiniz. Anlaştık, hayrını görün."
+    };
+
+    private static readonly string[] AttachedAcceptedLines = new string[]
+    {
+        "Pekala... Ona iyi bakın olur mu? Gerçekten benim için çok özel bir parçaydı.",
+        "Umarım doğru kişiye gider... Söz verdiğin parayı ver, gideyim artık."
+    };
+
+    // =========================================================================
+    // 5. ÇEKİP GİTME (WALK AWAY)
+    // =========================================================================
+
+    private static readonly string[] WalkAwayLines = new string[]
+    {
+        "Seninle iş yapılmaz. Malımı çöpe atarım sana yine vermem!",
+        "Ölücülere kaptıracak malım yok benim. İyi günler!",
+        "Boşuna nefes tüketmişim. Başka dükkana gidiyorum!",
+        "Vakit kaybından başka bir şey değilsin. Hadi eyvallah!"
+    };
+
+    // =========================================================================
+    // DİYALOG SEÇİM MOTORU (RESOLVER)
+    // =========================================================================
+
+    /// <summary>
+    /// Müşterinin kişiliğine ve o anki duruma en uygun diyaloğu seçer.
+    /// </summary>
+    public static string GetDialogue(CustomerTraits traits, DialogueContext context, float extraPriceInfo = 0f)
+    {
+        switch (context)
+        {
+            case DialogueContext.Greeting:
+                return ResolveGreeting(traits);
+
+            case DialogueContext.CounterOffer:
+                return ResolveCounterOffer(traits, extraPriceInfo);
+
+            case DialogueContext.LosingPatience:
+                return GetRandomLine(ImpatientWarningLines);
+
+            case DialogueContext.DealAccepted:
+                return ResolveAccepted(traits);
+
+            case DialogueContext.WalkAway:
+            case DialogueContext.LowballRejection:
+                return GetRandomLine(WalkAwayLines);
+
+            default:
+                return "Ne diyorsun, anlaşabilecek miyiz?";
+        }
+    }
+
+    private static string ResolveGreeting(CustomerTraits traits)
+    {
+        // 1. Öncelik: Borçlu + Acil Nakit Baskısı
+        if (traits.debt > 65 && traits.urgency > 65 && traits.needMoney > 65)
+            return GetRandomLine(DesperateGreetingLines);
+
+        // 2. Öncelik: Tok Satıcı / Kibir
+        if (traits.pride > 70 && traits.needMoney < 45)
+            return GetRandomLine(ProudSellerGreetingLines);
+
+        // 3. Öncelik: Eşyaya Duygusal Bağ
+        if (traits.itemAttachment > 75)
+            return GetRandomLine(AttachedGreetingLines);
+
+        // 4. Öncelik: Şüpheli / Çakma Ürün Satıcısı
+        if (traits.honesty < 35 && traits.greed > 65)
+            return GetRandomLine(ShadyGreetingLines);
+
+        // 5. Öncelik: Piyasayı Bilen Esnaf Müşteri
+        if (traits.itemKnowledge > 80 && traits.hagglingSkill > 70)
+            return GetRandomLine(SavvyGreetingLines);
+
+        // Varsayılan
+        return GetRandomLine(NeutralGreetingLines);
+    }
+
+    private static string ResolveCounterOffer(CustomerTraits traits, float counterPrice)
+    {
+        string priceTag = counterPrice > 0 ? $" Benim son teklifim ${counterPrice:N0}." : "";
+
+        if (traits.pride > 70)
+            return GetRandomLine(ProudCounterLines) + priceTag;
+
+        if (traits.itemAttachment > 70)
+            return GetRandomLine(AttachedCounterLines) + priceTag;
+
+        if (traits.desperation > 65 || traits.debt > 70)
+            return GetRandomLine(DesperateCounterLines) + priceTag;
+
+        return $"Bu teklif çok düşük. Senin için ${counterPrice:N0} seviyesine inebilirim.";
+    }
+
+    private static string ResolveAccepted(CustomerTraits traits)
+    {
+        if (traits.desperation > 65)
+            return GetRandomLine(DesperateAcceptedLines);
+
+        if (traits.pride > 70)
+            return GetRandomLine(ProudAcceptedLines);
+
+        if (traits.itemAttachment > 70)
+            return GetRandomLine(AttachedAcceptedLines);
+
+        return "Fiyat gayet adil. El sıkışalım, anlaştık!";
+    }
+
+    private static string GetRandomLine(string[] lines)
+    {
+        if (lines == null || lines.Length == 0) return "...";
+        return lines[Random.Range(0, lines.Length)];
+    }
+}
+
+
+
+using System.Collections.Generic;
+using UnityEngine;
+
+public static class DialogueGenerator
+{
+    /// <summary>
+    /// Müşterinin zıt veya pekiştirici özelliklerinin kombinasyonuna göre dinamik replik üretir.
+    /// </summary>
+    public static string GenerateContextualDialogue(CustomerTraits traits, DialogueContext context, float extraPrice = 0f)
+    {
+        switch (context)
+        {
+            case DialogueContext.Greeting:
+                return GenerateGreetingDialogue(traits);
+
+            case DialogueContext.CounterOffer:
+                return GenerateCounterOfferDialogue(traits, extraPrice);
+
+            case DialogueContext.LowballRejection:
+                return GenerateLowballDialogue(traits);
+
+            case DialogueContext.LosingPatience:
+                return GenerateImpatienceDialogue(traits);
+
+            case DialogueContext.DealAccepted:
+                return GenerateAcceptedDialogue(traits);
+
+            default:
+                return "Pekala, bu teklife ne diyorsun?";
+        }
+    }
+
+    // =========================================================================
+    // 1. GİRİŞ VE AÇILIŞ DİYALOGLARI (ÖZELLİK KOMBİNASYONLARI)
+    // =========================================================================
+    private static string GenerateGreetingDialogue(CustomerTraits traits)
+    {
+        // KOMBİNASYON 1: Aciliyet Yüksek + Gurur Yüksek (Çaresiz ama Burnu Havada)
+        if (traits.urgency > 75 && traits.pride > 75)
+        {
+            return PickRandom(new string[]
+            {
+                "Bugün bu parayı çıkarmak zorundayım ama beni köşeye sıkışmış görüp aptal yerine koymaya kalkmayın.",
+                "Zamanım çok dar, acil nakite ihtiyacım var. Yine de değerinin altında tek kuruşa bırakmam, bilginiz olsun.",
+                "Acelem var diye beni ezebileceğinizi sanmayın. Ciddi ve dürüst bir teklifle gelin, hemen anlaşalım."
+            });
+        }
+
+        // KOMBİNASYON 2: Yüksek Borç/Çaresizlik + Eşyaya Aşırı Bağlılık (Vicdan Azabı Çeken Satıcı)
+        if ((traits.debt > 75 || traits.desperation > 75) && traits.itemAttachment > 75)
+        {
+            return PickRandom(new string[]
+            {
+                "Gırtlağıma kadar borca batmamış olsam bu yadigârı dünya para verseler kapıdan içeri sokmazdım...",
+                "Bunu buraya getirmek ciğerimi söküyor ama icra kapıda. Lütfen hak ettiği bir para verin de içim rahat etsin.",
+                "Mecbur kalmasam ailemin hatırasını asla masaya koymazdım. Beni daha fazla yıpratmadan adil bir fiyat verin."
+            });
+        }
+
+        // KOMBİNASYON 3: Açgözlülük Yüksek + Dürüstlük Düşük (Sıcak Paracı / Dolandırıcı Tipi)
+        if (traits.greed > 75 && traits.honesty < 35)
+        {
+            return PickRandom(new string[]
+            {
+                "Soru sormayı bırak da paraya odaklan usta. Sağlam bir para sayarsan ikimiz de bu işten karlı çıkarız.",
+                "Kutusunu, geçmişini falan kurcalama; mal ortada. Bana peşin güzel bir para ver, hemen el sıkışalım.",
+                "Şans ayağına geldi. Benden bu fiyata al, yarın vitrinde iki katına okutursun. Anla işte vaziyeti."
+            });
+        }
+
+        // KOMBİNASYON 4: Paraya İhtiyaç Yok + Yüksek Gurur + Bilgili (Tok Koleksiyoner)
+        if (traits.needMoney < 35 && traits.pride > 75 && traits.itemKnowledge > 70)
+        {
+            return PickRandom(new string[]
+            {
+                "Paraya zerre ihtiyacım yok. Sadece koleksiyonumdaki bu nadir parçanın kıymetini bilecek bir vitrin arıyorum.",
+                "Bunun hangi döneme ait olduğunu ve gerçek değerini çok iyi biliyorum. Komik rakamlarla esnaflığınızı küçültmeyin.",
+                "İster alırım ister salondaki vitrinime geri koyarım, hiç dert değil. Gerçek piyasa değerini konuşacaksanız buyrun."
+            });
+        }
+
+        // KOMBİNASYON 5: Bilgisiz ama Aşırı Şüpheci/Kibirli
+        if (traits.itemKnowledge < 35 && traits.pride > 75)
+        {
+            return PickRandom(new string[]
+            {
+                "Bu işlerin piyasasını pek bilmem ama kimseye de malımı üç kuruşa kaptıracak kadar saf değilim.",
+                "Antikadan anlamam ama ailemden kalma değerli bir parça olduğunu biliyorum. Beni kandırmaya kalkmayın."
+            });
+        }
+
+        // KOMBİNASYON 6: Sadece Saf Aciliyet ve Çaresizlik
+        if (traits.urgency > 80 || traits.desperation > 80)
+        {
+            return PickRandom(new string[]
+            {
+                "Bugün bu eşyayı kesinlikle satmam gerekiyor. Lütfen beni fazla uğraştırmadan elinizden geleni verin.",
+                "Saat işliyor, akşama kadar bu parayı denkleştirmem şart. Ne kadar verirseniz verin makul olsun yeter."
+            });
+        }
+
+        // KOMBİNASYON 7: Sadece Saf Gurur
+        if (traits.pride > 80)
+        {
+            return PickRandom(new string[]
+            {
+                "Değerinin altında tek kuruş dahi istemiyorum. Kalitenin bir bedeli vardır.",
+                "Ucuza gidecek tek bir çöpüm dahi yok. Hak ettiği rakam neyse onu konuşuruz."
+            });
+        }
+
+        // KOMBİNASYON 8: Sadece Saf Eşyaya Bağlılık
+        if (traits.itemAttachment > 80)
+        {
+            return PickRandom(new string[]
+            {
+                "Bunu satmak içimi parçalıyor... Lütfen ona sıradan bir teneke muamelesi yapmayın.",
+                "Bunun bende çok büyük hatırası var. Parası bir yana, emanet edecek doğru yeri arıyorum."
+            });
+        }
+
+        // Standart Varsayılan
+        return "Merhaba usta. Elimde böyle bir parça var, dükkanınızda değerlendirmek istiyorum.";
+    }
+
+    // =========================================================================
+    // 2. PAZARLIK & KARŞI TEKLİF DİYALOGLARI (FİYAT DİRENCİ)
+    // =========================================================================
+    private static string GenerateCounterOfferDialogue(CustomerTraits traits, float counterPrice)
+    {
+        string priceStr = counterPrice > 0 ? $" Son olarak ${counterPrice:N0} olur." : "";
+
+        // Acil nakit lazım ama gururu da yüksek (İkilemde)
+        if (traits.urgency > 70 && traits.pride > 70)
+        {
+            return $"Zamanım olsaydı bu teklife güler geçerdim! Sırf acelem var diye bir adım atıyorum.{priceStr}";
+        }
+
+        // Eşyaya bağlı ama borçlu (Hüzünlü indirim)
+        if (traits.itemAttachment > 70 && traits.debt > 70)
+        {
+            return $"Zaten yadigârı sattığıma yanıyorum, bari bu kadar öldürme be esnafım...{priceStr}";
+        }
+
+        // Tok satıcı (Dirençli)
+        if (traits.pride > 75 && traits.needMoney < 40)
+        {
+            return $"Pazarlık adabını aşmayın. İneneceğim tek kademe budur, fazlasını teklif dahi etmeyin.{priceStr}";
+        }
+
+        // Sabrı azalan esnaf tipi
+        if (traits.hagglingSkill > 70)
+        {
+            return $"İkimiz de bu işin kurallarını biliyoruz. Seni üzmem ama kendimi de ezdirmem.{priceStr}";
+        }
+
+        return $"Bu teklif çok düşük kaldı. Senin hatırına şu seviyeye inebilirim:{priceStr}";
+    }
+
+    // =========================================================================
+    // 3. ÇOK DÜŞÜK TEKLİF HAKARET TEPKİLERİ (LOWBALL REJECTION)
+    // =========================================================================
+    private static string GenerateLowballDialogue(CustomerTraits traits)
+    {
+        if (traits.pride > 75 && traits.urgency > 70)
+        {
+            return "Köşeye sıkıştığımı anlayıp leş kargası gibi çökmeye çalıştın değil mi?! Aç kalırım yine sana vermem!";
+        }
+
+        if (traits.pride > 75)
+        {
+            return "Sen benim aklımla alay mı ediyorsun?! Bu teklif bir esnafa değil, ancak bir dolandırıcıya yakışır!";
+        }
+
+        if (traits.itemAttachment > 75)
+        {
+            return "Babamın emanetine bu parayı biçmek resmen hakarettir! Al eşyanı başına çal!";
+        }
+
+        return "Bu kadar da ölücülük olmaz! Vaktimi çaldınız, gidiyorum!";
+    }
+
+    // =========================================================================
+    // 4. SABIR TÜKENİRKEN (PATIENCE RUNNING OUT)
+    // =========================================================================
+    private static string GenerateImpatienceDialogue(CustomerTraits traits)
+    {
+        if (traits.urgency > 75)
+        {
+            return "Zamanım bitiyor diyorum, sen hala üç kuruşun hesabını yapıyorsun! Son teklifin ne, söyle!";
+        }
+
+        if (traits.pride > 75)
+        {
+            return "Sabrımı sınıyorsunuz. Ben buraya laf işitmeye gelmedim. Ciddi olun ya da çıkıp gideyim!";
+        }
+
+        return "Gittikçe sabrımı tüketiyorsun. Ya aklı başında bir para ver ya da eşyamı geri ver!";
+    }
+
+    // =========================================================================
+    // 5. ANLAŞMA SAĞLANDIĞINDA (DEAL ACCEPTED)
+    // =========================================================================
+    private static string GenerateAcceptedDialogue(CustomerTraits traits)
+    {
+        // Acil + Gururlu: İstemeye istemeye kabul ediş
+        if (traits.urgency > 70 && traits.pride > 70)
+        {
+            return "Pekala... Durumum elvermediği için kabul ediyorum. Ama şunu bil ki bu eşyanın hakkı bu değildi.";
+        }
+
+        // Borçlu + Çaresiz: Rahatlama
+        if (traits.desperation > 70)
+        {
+            return "Çok şükür... Bu para beni bu akşamlık kurtarır. Say parayı hemen usta, sağ olasın.";
+        }
+
+        // Tok satıcı: Memnuniyet
+        if (traits.pride > 75)
+        {
+            return "Adil bir esnafla iş yapmak güzel. Malımın değerini teslim ettiniz, el sıkışalım.";
+        }
+
+        // Bağlı: Hüzünlü kabulleniş
+        if (traits.itemAttachment > 75)
+        {
+            return "Anlaştık... Lütfen ona iyi bakın. Gerçekten ailemiz için çok kıymetliydi.";
+        }
+
+        return "Fiyat gayet uygun. Anlaştık, hayırlı olsun!";
+    }
+
+    private static string PickRandom(string[] array)
+    {
+        if (array == null || array.Length == 0) return "";
+        return array[Random.Range(0, array.Length)];
+    }
+}
+
+
