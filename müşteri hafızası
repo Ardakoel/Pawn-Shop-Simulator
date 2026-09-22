@@ -1,0 +1,169 @@
+using System;
+using UnityEngine;
+
+public enum DealOutcomeHistory
+{
+    None,             // İlk kez geliyor, geçmiş yok
+    SuccessfulDeal,   // Geçen sefer anlaşıldı (Mutlu ayrıldı)
+    InsultedLowball,  // Çok düşük teklifle gururu kırıldı / kazıklanmaya çalışıldı
+    WalkedAwayPatience,// Sabrı bittiği için anlaşamadan gitti
+    CaughtCounterfeit // Sahtekarlık yaparken yakalandı / yüzleşildi
+}
+
+[System.Serializable]
+public class CustomerMemoryRecord
+{
+    public string customerFullName;       // Müşterinin tam adı (Örn: "Mateo Rodriguez")
+    public int visitCount = 0;             // Kaçıncı gelişi?
+    
+    [Header("Son Ziyaret Detayları")]
+    public string lastItemName;            // Geçen getirdiği eşya (Örn: "Rolex Submariner")
+    public float lastPlayerOffer;          // Oyuncunun verdiği son teklif
+    public float lastAgreedPrice;          // Eğer satıldıysa anlaşılan fiyat
+    public DealOutcomeHistory lastOutcome; // Nasıl ayrıldı?
+    
+    [Header("Oyuncuya Olan Özel Güven (0 - 100)")]
+    [Range(0, 100)] public float personalTrust = 50f;
+
+    public CustomerMemoryRecord(string name)
+    {
+        customerFullName = name;
+        visitCount = 1;
+        personalTrust = 50f;
+        lastOutcome = DealOutcomeHistory.None;
+    }
+}
+
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+public class CustomerMemorySystem : MonoBehaviour
+{
+    public static CustomerMemorySystem Instance { get; private set; }
+
+    // Tüm müşterilerin hafıza arşivi (İsim bazlı arama)
+    [SerializeField] 
+    private List<CustomerMemoryRecord> memoryDatabase = new List<CustomerMemoryRecord>();
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+    }
+
+    /// <summary>
+    /// Kapıdan giren müşterinin hafıza kaydını çeker; ilk defa geliyorsa yeni dosya açar.
+    /// </summary>
+    public CustomerMemoryRecord RetrieveOrCreateMemory(string customerName)
+    {
+        CustomerMemoryRecord record = memoryDatabase.Find(r => r.customerFullName.Equals(customerName, StringComparison.OrdinalIgnoreCase));
+
+        if (record == null)
+        {
+            record = new CustomerMemoryRecord(customerName);
+            memoryDatabase.Add(record);
+        }
+        else
+        {
+            record.visitCount++;
+        }
+
+        return record;
+    }
+
+    /// <summary>
+    /// Masadaki pazarlık bittiğinde (anlaşma sağlandı, müşteri gitti vs.) hafızayı günceller.
+    /// </summary>
+    public void UpdateMemoryAfterDeal(
+        string customerName, 
+        string itemName, 
+        float playerOffer, 
+        float finalPrice, 
+        DealOutcomeHistory outcome)
+    {
+        CustomerMemoryRecord record = RetrieveOrCreateMemory(customerName);
+        record.lastItemName = itemName;
+        record.lastPlayerOffer = playerOffer;
+        record.lastAgreedPrice = finalPrice;
+        record.lastOutcome = outcome;
+
+        // Güven puanı güncellemesi
+        switch (outcome)
+        {
+            case DealOutcomeHistory.SuccessfulDeal:
+                record.personalTrust = Mathf.Clamp(record.personalTrust + 15f, 0f, 100f);
+                break;
+
+            case DealOutcomeHistory.InsultedLowball:
+                record.personalTrust = Mathf.Clamp(record.personalTrust - 25f, 0f, 100f);
+                break;
+
+            case DealOutcomeHistory.WalkedAwayPatience:
+                record.personalTrust = Mathf.Clamp(record.personalTrust - 10f, 0f, 100f);
+                break;
+
+            case DealOutcomeHistory.CaughtCounterfeit:
+                record.personalTrust = Mathf.Clamp(record.personalTrust - 5f, 0f, 100f);
+                break;
+        }
+
+        Debug.Log($"<color=magenta>[HAFIZA GÜNCELLENDİ]:</color> {customerName} | Ziyaret: {record.visitCount} | Sonuç: {outcome} | Güven: {record.personalTrust:F0}");
+    }
+
+    /// <summary>
+    /// Müşterinin hafızasına göre tezgâha adım attığında söyleyeceği özel hatırlatma cümlesi.
+    /// </summary>
+    public string GenerateMemoryGreeting(CustomerMemoryRecord memory, CustomerTraits traits)
+    {
+        // 1. Ziyaret: İlk defa geliyor, hafıza repliği yok
+        if (memory.visitCount <= 1 || memory.lastOutcome == DealOutcomeHistory.None)
+        {
+            return ""; // Standart DialogueGenerator selamlama cümlesi devreye girer
+        }
+
+        // 2. ve Sonraki Ziyaretler: Geçmişe göre özel replikler
+        switch (memory.lastOutcome)
+        {
+            case DealOutcomeHistory.InsultedLowball:
+                return $"Yine mi sen? Geçen sefer getirdiğim {memory.lastItemName} için bana komik bir ${memory.lastPlayerOffer:N0} teklif edip beni kazıklamaya çalışmıştın! Bu sefer yemez, aklını başına devir.";
+
+            case DealOutcomeHistory.SuccessfulDeal:
+                return $"Selam usta! Geçen sefer {memory.lastItemName} konusunda çok dürüst ve yardımcı olmuştun. Elimde yine temiz bir parça var, ilk sana getirdim.";
+
+            case DealOutcomeHistory.WalkedAwayPatience:
+                return $"Umarım bu sefer çene çalmak yerine ciddi bir teklif verirsin. Geçen gelişimde bütün vaktimi boşa harcamıştın.";
+
+            case DealOutcomeHistory.CaughtCounterfeit:
+                return $"(Gözlerini kaçırarak) Şey... Selam. Geçen seferki saat mevzusunu unutalım, bu sefer getirdiğim parçanın orijinal olduğuna yemin edebilirim...";
+
+            default:
+                return $"Tekrar karşılaştık esnaf. Bakalım bu sefer anlaşabilecek miyiz?";
+        }
+    }
+
+    /// <summary>
+    /// Geçmiş deneyimin müşterinin bugünkü sabrına ve fiyat inadına etkisi.
+    /// </summary>
+    public void ApplyMemoryModifiersToTraits(CustomerMemoryRecord memory, CustomerTraits traits)
+    {
+        if (memory.visitCount <= 1) return;
+
+        if (memory.lastOutcome == DealOutcomeHistory.InsultedLowball)
+        {
+            // Geçen sefer ezildiyse sabrı %30 daha az başlar, gururu artar!
+            traits.patience = Mathf.RoundToInt(traits.patience * 0.70f);
+            traits.pride = Mathf.Clamp(traits.pride + 15, 0, 100);
+            Debug.Log("<color=orange>[HAFIZA ETKİSİ]:</color> Müşteri geçen seferden kinli! Sabrı düşük, gururu yüksek başladı.");
+        }
+        else if (memory.lastOutcome == DealOutcomeHistory.SuccessfulDeal)
+        {
+            // Geçen sefer memnun ayrıldıysa daha sabırlı ve toleranslıdır
+            traits.patience = Mathf.Clamp(traits.patience + 15, 0, 100);
+            traits.hagglingSkill = Mathf.RoundToInt(traits.hagglingSkill * 0.90f); // Bize güvendiği için daha az direnir
+            Debug.Log("<color=green>[HAFIZA ETKİSİ]:</color> Müşteri eski dost! Daha sabırlı ve esnek pazarlık yapacak.");
+        }
+    }
+}
+
+
