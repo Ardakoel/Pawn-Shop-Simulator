@@ -1,0 +1,162 @@
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+[System.Serializable]
+public class MarketTrend
+{
+    public ItemCategory category;
+    [Range(-0.50f, 0.60f)]
+    public float priceChangePercentage; // Örn: +0.20 (+%20) veya -0.15 (-%15)
+    public string headlineNews;          // Oyuncunun gazetede göreceği haber başlığı
+
+    public float CurrentMultiplier => 1.0f + priceChangePercentage;
+}
+
+public class MarketSystem : MonoBehaviour
+{
+    public static MarketSystem Instance { get; private set; }
+
+    [Header("Günlük Piyasa Verileri")]
+    public int currentDay = 1;
+    [SerializeField] private List<MarketTrend> activeTrends = new List<MarketTrend>();
+
+    // Olay Bildirimi: Gün döndüğünde UI'daki borsa ekranını ve fiyatları günceller
+    public event Action<int, List<MarketTrend>> OnMarketUpdated;
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+    }
+
+    private void Start()
+    {
+        // İlk gün piyasasını oluştur
+        GenerateDailyMarketTrends();
+    }
+
+    /// <summary>
+    /// Her yeni gün başladığında (Dükkan açılışında) çağrılır.
+    /// </summary>
+    public void AdvanceToNextDay()
+    {
+        currentDay++;
+        GenerateDailyMarketTrends();
+    }
+
+    /// <summary>
+    /// Tüm kategoriler için günlük dalgalanmaları ve haberleri üretir.
+    /// </summary>
+    private void GenerateDailyMarketTrends()
+    {
+        activeTrends.Clear();
+
+        // Tüm kategorileri tara
+        foreach (ItemCategory cat in Enum.GetValues(typeof(ItemCategory)))
+        {
+            MarketTrend trend = new MarketTrend { category = cat };
+
+            // %40 ihtimalle piyasa durağandır (%0 ile %5 arası küçük oynama)
+            // %60 ihtimalle hissedilir bir dalgalanma olur (-%30 ile +%40 arası)
+            if (UnityEngine.Random.value < 0.40f)
+            {
+                trend.priceChangePercentage = (float)Math.Round(UnityEngine.Random.Range(-0.05f, 0.05f), 2);
+                trend.headlineNews = $"{cat.ToDisplayName()} piyasasında sakin bir gün.";
+            }
+            else
+            {
+                // Rastgele yön: Boğa (Yükseliş) veya Ayı (Düşüş)
+                bool isBoom = UnityEngine.Random.value > 0.50f;
+
+                if (isBoom)
+                {
+                    trend.priceChangePercentage = (float)Math.Round(UnityEngine.Random.Range(0.10f, 0.40f), 2);
+                    trend.headlineNews = GetBoomHeadline(cat, trend.priceChangePercentage);
+                }
+                else
+                {
+                    trend.priceChangePercentage = (float)Math.Round(UnityEngine.Random.Range(-0.30f, -0.10f), 2);
+                    trend.headlineNews = GetCrashHeadline(cat, trend.priceChangePercentage);
+                }
+            }
+
+            activeTrends.Add(trend);
+        }
+
+        Debug.Log($"<color=yellow>================= GÜN {currentDay} PİYASA BÜLTENİ =================</color>");
+        foreach (var t in activeTrends)
+        {
+            if (Mathf.Abs(t.priceChangePercentage) >= 0.10f)
+            {
+                string color = t.priceChangePercentage > 0 ? "green" : "red";
+                string sign = t.priceChangePercentage > 0 ? "+" : "";
+                Debug.Log($"<color={color}>[{t.category.ToDisplayName()}]: {sign}%{t.priceChangePercentage * 100:0} | {t.headlineNews}</color>");
+            }
+        }
+
+        OnMarketUpdated?.Invoke(currentDay, activeTrends);
+    }
+
+    /// <summary>
+    /// Belirli bir kategorinin bugünkü piyasa çarpanını verir (Örn: +%20 ise 1.20f döner).
+    /// </summary>
+    public float GetMarketMultiplier(ItemCategory category)
+    {
+        MarketTrend trend = activeTrends.Find(t => t.category == category);
+        return trend != null ? trend.CurrentMultiplier : 1.0f;
+    }
+
+    /// <summary>
+    /// Eşyanın bugünkü piyasa koşullarındaki güncel değerini hesaplar.
+    /// </summary>
+    public float GetAdjustedItemValue(PawnShopItem item)
+    {
+        float multiplier = GetMarketMultiplier(item.category);
+        return Mathf.Round(item.currentMarketValue * multiplier);
+    }
+
+    // -------------------------------------------------------------
+    // TEMATİK EKONOMİ HABERLERİ
+    // -------------------------------------------------------------
+    private string GetBoomHeadline(ItemCategory cat, float rate)
+    {
+        int percent = Mathf.RoundToInt(rate * 100);
+        switch (cat)
+        {
+            case ItemCategory.Watch:
+                return $"Ünlü bir aktör vintage saat taktı, talep patladı! (+%{percent})";
+            case ItemCategory.Jewelry:
+            case ItemCategory.Coin:
+                return $"Küresel enflasyon endişesiyle altın ve kıymetli madenlere hücum var! (+%{percent})";
+            case ItemCategory.Painting:
+                return $"Şehirde uluslararası sanat fuarı açıldı, zengin koleksiyonerler alımda! (+%{percent})";
+            case ItemCategory.Electronics:
+                return $"Çip krizi ve tedarik zinciri aksamaları ikinci el elektroniği uçurdu! (+%{percent})";
+            case ItemCategory.Antique:
+                return $"Müzayede evlerinde tarihi antikalara rekor teklifler veriliyor! (+%{percent})";
+            default:
+                return $"{cat.ToDisplayName()} ürünlerine olan ilgi hızla yükseliyor! (+%{percent})";
+        }
+    }
+
+    private string GetCrashHeadline(ItemCategory cat, float rate)
+    {
+        int percent = Mathf.Abs(Mathf.RoundToInt(rate * 100));
+        switch (cat)
+        {
+            case ItemCategory.Watch:
+                return $"Piyasaya çok sayıda şüpheli kopya sürüldü, lüks saat talebi çakıldı! (-%{percent})";
+            case ItemCategory.Electronics:
+                return $"Yeni nesil modeller tanıtıldı, eski cihazların fiyatı serbest düşüşte! (-%{percent})";
+            case ItemCategory.Jewelry:
+            case ItemCategory.Coin:
+                return $"Merkez bankası faiz artırdı, değerli madenlerde sert satış dalgası! (-%{percent})";
+            case ItemCategory.Painting:
+                return $"Sahte tablo skandalı sanat piyasasını dondurdu, alıcılar çekimser! (-%{percent})";
+            default:
+                return $"{cat.ToDisplayName()} piyasasında talep durma noktasına geldi. (-%{percent})";
+        }
+    }
+}
+
