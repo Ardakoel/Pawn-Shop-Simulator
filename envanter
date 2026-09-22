@@ -1,0 +1,276 @@
+using System;
+using UnityEngine;
+
+[System.Serializable]
+public class InventoryItem
+{
+    [Header("Kimlik & Tarih")]
+    public string uniqueID;          // Benzersiz GUID (Örn: "e8b2c451-...")
+    public string itemTemplateID;    // Bağlı olduğu ItemData ID'si (Save/Load için)
+    public string itemName;
+    public ItemCategory category;
+    public string purchaseDate;      // Satın alınma tarihi (Örn: "2026-09-22 14:30" veya oyun içi "Day 12")
+
+    [Header("Finansal Değerler")]
+    public float purchasePrice;      // Oyuncunun müşteriye ödediği alış fiyatı
+    public float actualValue;        // Eşyanın piyasadaki gerçek/ekspertiz değeri
+    public float targetResalePrice;  // Vitrine koyarken biçilen satış fiyatı
+
+    [Header("Durum & Orijinallik")]
+    public AuthenticityType authenticity; // Authentic, Fake, Replica, Modified, Stolen...
+    public ItemCondition condition;       // Mint, Good, Fair, Poor, Broken
+    public string serialNumber;
+    public bool isIdentified;             // Oyuncu ekspertiz yapıp sahtelik/çalıntı durumunu öğrendi mi?
+
+    [Header("Önceki Sahip Bilgisi")]
+    public string previousOwnerName;      // Müşterinin tam adı (Örn: "Mateo Rodriguez")
+    public string previousOwnerNotes;     // Kısa not (Örn: "Borçlu, acelesi vardı")
+
+    public InventoryItem(
+        PawnShopItem pawnItem, 
+        float paidPrice, 
+        float realValue, 
+        string ownerName, 
+        string inGameDate)
+    {
+        uniqueID = Guid.NewGuid().ToString();
+        itemTemplateID = pawnItem.template != null ? pawnItem.template.itemID : "UNKNOWN_ITEM";
+        itemName = pawnItem.customName;
+        category = pawnItem.category;
+        
+        purchasePrice = paidPrice;
+        actualValue = realValue;
+        targetResalePrice = Mathf.Round(realValue * 1.25f); // Varsayılan %25 kâr marjı
+
+        authenticity = pawnItem.authenticity;
+        condition = pawnItem.condition;
+        serialNumber = pawnItem.serialNumber;
+        isIdentified = pawnItem.isIdentified;
+
+        previousOwnerName = ownerName;
+        purchaseDate = inGameDate;
+    }
+
+    /// <summary>
+    /// Eşyanın potansiyel kâr marjını hesaplar.
+    /// </summary>
+    public float GetEstimatedProfitMargin()
+    {
+        return actualValue - purchasePrice;
+    }
+}
+
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+public class InventorySystem : MonoBehaviour
+{
+    public static InventorySystem Instance { get; private set; }
+
+    [Header("Depo Kapasitesi")]
+    public int maxCapacity = 50; // Maksimum depolanabilir eşya sayısı
+    [SerializeField] private List<InventoryItem> items = new List<InventoryItem>();
+
+    // Olay Bildirimleri (UI ve Görev Sistemleri İçin)
+    public event Action OnInventoryChanged;
+    public event Action<InventoryItem> OnItemAdded;
+    public event Action<InventoryItem> OnItemRemoved;
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+    }
+
+    /// <summary>
+    /// Satın alınan eşyayı envantere ekler.
+    /// </summary>
+    public bool AddItem(PawnShopItem pawnItem, float paidPrice, float trueValue, string ownerName, string date)
+    {
+        if (items.Count >= maxCapacity)
+        {
+            Debug.LogWarning("<color=red>[ENVANTER DOLU]:</color> Dükkan deposunda yer kalmadı!");
+            return false;
+        }
+
+        InventoryItem newItem = new InventoryItem(pawnItem, paidPrice, trueValue, ownerName, date);
+        items.Add(newItem);
+
+        Debug.Log($"<color=green>[ENVANTERE EKLENDİ]:</color> {newItem.itemName} | Alış Fiyatı: ${newItem.purchasePrice:N0} | Sahip: {newItem.previousOwnerName}");
+
+        OnItemAdded?.Invoke(newItem);
+        OnInventoryChanged?.Invoke();
+        return true;
+    }
+
+    /// <summary>
+    /// Eşyayı vitrinde bir müşteriye satıldığında veya polise teslim edildiğinde envanterden çıkarır.
+    /// </summary>
+    public bool RemoveItem(string uniqueID)
+    {
+        InventoryItem itemToRemove = items.Find(i => i.uniqueID == uniqueID);
+        if (itemToRemove != null)
+        {
+            items.Remove(itemToRemove);
+            Debug.Log($"<color=orange>[ENVANTERDEN ÇIKARILDI]:</color> {itemToRemove.itemName} (ID: {uniqueID})");
+            
+            OnItemRemoved?.Invoke(itemToRemove);
+            OnInventoryChanged?.Invoke();
+            return true;
+        }
+
+        return false;
+    }
+
+    // -------------------------------------------------------------
+    // FİLTRELEME & SORGULAMA FONKSİYONLARI (UI İÇİN)
+    // -------------------------------------------------------------
+
+    public List<InventoryItem> GetAllItems() => new List<InventoryItem>(items);
+
+    public List<InventoryItem> GetItemsByCategory(ItemCategory category)
+    {
+        return items.FindAll(i => i.category == category);
+    }
+
+    /// <summary>
+    /// Çalıntı veya sahte olduğu bilinen riskli eşyaları listeler (Polis baskını öncesi kontrol).
+    /// </summary>
+    public List<InventoryItem> GetIllicitItems()
+    {
+        return items.FindAll(i => i.authenticity == AuthenticityType.Stolen || i.authenticity == AuthenticityType.Counterfeit);
+    }
+
+    /// <summary>
+    /// Belirli bir kişiden satın alınan eşyaları sorgular (Örn: Polis soruşturması).
+    /// </summary>
+    public List<InventoryItem> GetItemsByOwner(string ownerName)
+    {
+        return items.FindAll(i => i.previousOwnerName.Equals(ownerName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Depodaki tüm eşyaların toplam maliyetini ve toplam gerçek piyasa değerini hesaplar.
+    /// </summary>
+    public (float totalSpent, float totalValue) CalculateTotalInventoryWorth()
+    {
+        float spent = 0f;
+        float value = 0f;
+
+        foreach (var item in items)
+        {
+            spent += item.purchasePrice;
+            value += item.actualValue;
+        }
+
+        return (spent, value);
+    }
+}using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+public class InventorySystem : MonoBehaviour
+{
+    public static InventorySystem Instance { get; private set; }
+
+    [Header("Depo Kapasitesi")]
+    public int maxCapacity = 50; // Maksimum depolanabilir eşya sayısı
+    [SerializeField] private List<InventoryItem> items = new List<InventoryItem>();
+
+    // Olay Bildirimleri (UI ve Görev Sistemleri İçin)
+    public event Action OnInventoryChanged;
+    public event Action<InventoryItem> OnItemAdded;
+    public event Action<InventoryItem> OnItemRemoved;
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+    }
+
+    /// <summary>
+    /// Satın alınan eşyayı envantere ekler.
+    /// </summary>
+    public bool AddItem(PawnShopItem pawnItem, float paidPrice, float trueValue, string ownerName, string date)
+    {
+        if (items.Count >= maxCapacity)
+        {
+            Debug.LogWarning("<color=red>[ENVANTER DOLU]:</color> Dükkan deposunda yer kalmadı!");
+            return false;
+        }
+
+        InventoryItem newItem = new InventoryItem(pawnItem, paidPrice, trueValue, ownerName, date);
+        items.Add(newItem);
+
+        Debug.Log($"<color=green>[ENVANTERE EKLENDİ]:</color> {newItem.itemName} | Alış Fiyatı: ${newItem.purchasePrice:N0} | Sahip: {newItem.previousOwnerName}");
+
+        OnItemAdded?.Invoke(newItem);
+        OnInventoryChanged?.Invoke();
+        return true;
+    }
+
+    /// <summary>
+    /// Eşyayı vitrinde bir müşteriye satıldığında veya polise teslim edildiğinde envanterden çıkarır.
+    /// </summary>
+    public bool RemoveItem(string uniqueID)
+    {
+        InventoryItem itemToRemove = items.Find(i => i.uniqueID == uniqueID);
+        if (itemToRemove != null)
+        {
+            items.Remove(itemToRemove);
+            Debug.Log($"<color=orange>[ENVANTERDEN ÇIKARILDI]:</color> {itemToRemove.itemName} (ID: {uniqueID})");
+            
+            OnItemRemoved?.Invoke(itemToRemove);
+            OnInventoryChanged?.Invoke();
+            return true;
+        }
+
+        return false;
+    }
+
+    // -------------------------------------------------------------
+    // FİLTRELEME & SORGULAMA FONKSİYONLARI (UI İÇİN)
+    // -------------------------------------------------------------
+
+    public List<InventoryItem> GetAllItems() => new List<InventoryItem>(items);
+
+    public List<InventoryItem> GetItemsByCategory(ItemCategory category)
+    {
+        return items.FindAll(i => i.category == category);
+    }
+
+    /// <summary>
+    /// Çalıntı veya sahte olduğu bilinen riskli eşyaları listeler (Polis baskını öncesi kontrol).
+    /// </summary>
+    public List<InventoryItem> GetIllicitItems()
+    {
+        return items.FindAll(i => i.authenticity == AuthenticityType.Stolen || i.authenticity == AuthenticityType.Counterfeit);
+    }
+
+    /// <summary>
+    /// Belirli bir kişiden satın alınan eşyaları sorgular (Örn: Polis soruşturması).
+    /// </summary>
+    public List<InventoryItem> GetItemsByOwner(string ownerName)
+    {
+        return items.FindAll(i => i.previousOwnerName.Equals(ownerName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Depodaki tüm eşyaların toplam maliyetini ve toplam gerçek piyasa değerini hesaplar.
+    /// </summary>
+    public (float totalSpent, float totalValue) CalculateTotalInventoryWorth()
+    {
+        float spent = 0f;
+        float value = 0f;
+
+        foreach (var item in items)
+        {
+            spent += item.purchasePrice;
+            value += item.actualValue;
+        }
+
+        return (spent, value);
+    }
+}
+
