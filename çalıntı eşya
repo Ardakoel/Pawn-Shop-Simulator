@@ -1,0 +1,339 @@
+using UnityEngine;
+
+[System.Serializable]
+public class StolenItemRecord
+{
+    public string itemUniqueID;
+    public string itemName;
+    public string serialNumber;
+    
+    [Header("Adli Bilgiler")]
+    public string originalOwner;           // Asıl mağdur / hak sahibi (Örn: "Senator John Miller")
+    public string sellerName;              // Bize getiren hırsız/aracı
+    public int daysInShop = 0;             // Dükkânda kaç gündür duruyor?
+
+    [Header("Risk Matrisi (0 - 100)")]
+    [Range(0, 100)] public float currentPoliceHeat = 15f; // Mevcut polis radarına girme riski
+    public float dailyHeatIncrease = 10f;                 // Her gün risk ne kadar artar?
+    public bool isReportedToPolice = true;                // Sahibi karakola şikayette bulundu mu?
+    public bool isDefacedSerial = false;                  // Oyuncu seri numarasını kazıdı mı?
+
+    public StolenItemRecord(string id, string name, string serial, string realOwner, string thiefName)
+    {
+        itemUniqueID = id;
+        itemName = name;
+        serialNumber = serial;
+        originalOwner = realOwner;
+        sellerName = thiefName;
+        currentPoliceHeat = Random.Range(10f, 30f); // Başlangıç riski
+        dailyHeatIncrease = Random.Range(8f, 18f);  // Günlük artış hızı
+    }
+}
+
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+public enum PoliceConfrontationType
+{
+    RoutineCheck,     // Rutin devriye: Şansın varsa fark etmezler
+    DirectRaid,       // İhbarlı baskın: Seri no tutarsa doğrudan el koyarlar
+    OwnerWalkIn       // Asıl mağdur vitrinde eşyasını görüp dükkâna dalar!
+}
+
+public class StolenItemSystem : MonoBehaviour
+{
+    public static StolenItemSystem Instance { get; private set; }
+
+    [Header("Kolluk Kuvveti Takibi")]
+    [SerializeField] private List<StolenItemRecord> activeStolenRecords = new List<StolenItemRecord>();
+
+    // Olay Bildirimi
+    public event Action<StolenItemRecord, PoliceConfrontationType> OnPoliceIntervention;
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+    }
+
+    /// <summary>
+    /// Çalıntı bir eşya satın alındığında gizli polis dosyası açılır.
+    /// </summary>
+    public void RegisterStolenItem(InventoryItem item, string realOwner, string thiefName)
+    {
+        StolenItemRecord record = new StolenItemRecord(
+            item.uniqueID, 
+            item.itemName, 
+            item.serialNumber, 
+            realOwner, 
+            thiefName
+        );
+
+        activeStolenRecords.Add(record);
+        Debug.Log($"<color=red>[GİZLİ SABIKA KAYDI]:</color> '{item.itemName}' çalıntı olarak kaydedildi. Asıl Sahip: {realOwner} | Polis Takip Riski: %{record.currentPoliceHeat:F0}");
+    }
+
+    /// <summary>
+    /// Her yeni gün başladığında (MarketSystem / Gün Döngüsü) riskleri günceller ve baskın zarı atar.
+    /// </summary>
+    public void ProcessDailyStolenHeat()
+    {
+        for (int i = activeStolenRecords.Count - 1; i >= 0; i--)
+        {
+            var record = activeStolenRecords[i];
+            record.daysInShop++;
+
+            // Seri numarası kazınmamışsa risk katlanarak artar (Haberler yayılır, arama listesi güncellenir)
+            if (!record.isDefacedSerial)
+            {
+                record.currentPoliceHeat = Mathf.Clamp(record.currentPoliceHeat + record.dailyHeatIncrease, 0f, 100f);
+            }
+            else
+            {
+                // Seri no silinmişse polisin bulması zordur ama bulunursa ceza katlanır
+                record.currentPoliceHeat = Mathf.Clamp(record.currentPoliceHeat + 2f, 0f, 40f);
+            }
+
+            Debug.Log($"<color=orange>[POLİS RADARI]:</color> {record.itemName} | Gün: {record.daysInShop} | Yakalanma Riski: %{record.currentPoliceHeat:F0}");
+
+            // ---------------------------------------------------------
+            // BASKIN VE PATLAMA KONTROLÜ (ZAR ATIMI)
+            // ---------------------------------------------------------
+            float roll = UnityEngine.Random.Range(0f, 100f);
+
+            // 1. Durum: Asıl Sahibin Vitrinde Malını Görmesi (%5 ihtimal, eşya 2 günden fazladır dükkandaysa)
+            if (record.daysInShop >= 2 && UnityEngine.Random.value < 0.08f)
+            {
+                TriggerConfrontation(record, PoliceConfrontationType.OwnerWalkIn);
+                activeStolenRecords.RemoveAt(i);
+                continue;
+            }
+
+            // 2. Durum: Polisin Arama Emriyle Kapıya Dayanması
+            if (roll < record.currentPoliceHeat)
+            {
+                TriggerConfrontation(record, PoliceConfrontationType.DirectRaid);
+                activeStolenRecords.RemoveAt(i);
+                continue;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Polis veya Mağdur kapıya dayandığında çalışır.
+    /// </summary>
+    private void TriggerConfrontation(StolenItemRecord record, PoliceConfrontationType type)
+    {
+        switch (type)
+        {
+            case PoliceConfrontationType.OwnerWalkIn:
+                Debug.Log($"<color=red>🚨 [SKANDAL - SAHİBİ GELDİ!]:</color> {record.originalOwner} hışımla dükkâna girdi!\n" +
+                          $"\"Vitrindeki şu {record.itemName} benim! Geçen hafta evimden çalındı! Derhal polisi arıyorum!\"");
+                
+                // Eşyaya el konur, itibar çakılır
+                InventorySystem.Instance.RemoveItem(record.itemUniqueID);
+                PawnGameManager.Instance.shopReputation -= 25;
+                break;
+
+            case PoliceConfrontationType.DirectRaid:
+                Debug.Log($"<color=red>🚨 [POLİS BASKINI]:</color> Dedektifler dükkâna arama emriyle girdi!\n" +
+                          $"\"{record.serialNumber}\" seri numaralı {record.itemName} çalıntı listesinde eşleşti!");
+
+                // Eşyaya el koyma + Ağır para cezası
+                InventorySystem.Instance.RemoveItem(record.itemUniqueID);
+                float fine = 2500f;
+                PawnGameManager.Instance.playerCash = Mathf.Max(0f, PawnGameManager.Instance.playerCash - fine);
+                PawnGameManager.Instance.shopReputation -= 15;
+
+                Debug.Log($"Sonuç: Eşyaya el konuldu, ${fine:N0} kaçak eşya cezası kesildi!");
+                break;
+        }
+
+        OnPoliceIntervention?.Invoke(record, type);
+    }
+
+    // -------------------------------------------------------------
+    // OYUNCUNUN KARA BORSA / KURTULMA HAMLELERİ
+    // -------------------------------------------------------------
+
+    /// <summary>
+    /// Oyuncu arka atölyede eşyanın seri numarasını kazıyarak silebilir.
+    /// </summary>
+    public void DefaceSerialNumber(string uniqueID)
+    {
+        var record = activeStolenRecords.Find(r => r.itemUniqueID == uniqueID);
+        if (record != null)
+        {
+            record.isDefacedSerial = true;
+            record.currentPoliceHeat = 10f; // Risk sıfıra yakın düşer
+            Debug.Log($"<color=grey>[SERİ NO SİLİNDİ]:</color> {record.itemName} üzerindeki damgalar zımparalandı. Polis doğrudan tespit edemez ama eşyanın piyasa değeri düştü.");
+        }
+    }
+
+    /// <summary>
+    /// Eşya bir alıcıya satıldığında dükkândan çıkar, dükkânın riski temizlenir.
+    /// </summary>
+    public void ClearRecordOnSale(string uniqueID)
+    {
+        activeStolenRecords.RemoveAll(r => r.itemUniqueID == uniqueID);
+    }
+}
+
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+public enum PoliceAuditResult
+{
+    Clean,          // Teftiş temiz bitti, sorun yok (+ İtibar)
+    WarningIssued,  // Küçük şüpheler var, resmi uyarı verildi
+    Busted          // Çalıntı/Yasadışı mal veya kara para aklandı, ağır ceza!
+}
+
+public class PoliceSystem : MonoBehaviour
+{
+    public static PoliceSystem Instance { get; private set; }
+
+    [Header("Olasılık Ayarları")]
+    [Tooltip("Her gün polisin kapıya dayanma ihtimali (Nadir: %7)")]
+    [Range(1, 100)] public int dailyInspectionChance = 7;
+
+    [Header("Şüpheli İşlem Kayıtları (Kara Para / Ölücü Fiyat Takibi)")]
+    [SerializeField] private int suspiciousTransactionCount = 0;
+
+    // Olay Bildirimi: UI'da sirenler ve polis diyaloğu penceresini açmak için
+    public event Action<PoliceAuditReport> OnPoliceInspectionStarted;
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+    }
+
+    /// <summary>
+    /// Oyuncu piyasa değerinin %35'inden daha ucuza (ölücü fiyata) mal kapattığında şüpheli işlem puanı artar.
+    /// </summary>
+    public void LogTransaction(float purchasePrice, float actualValue)
+    {
+        if (purchasePrice < (actualValue * 0.35f))
+        {
+            suspiciousTransactionCount++;
+            Debug.Log($"<color=grey>[MALİ ŞÜPHE]:</color> Çok ucuza eşya alındı. Maliye/Polis radarına şüpheli işlem işlendi. (Toplam: {suspiciousTransactionCount})");
+        }
+    }
+
+    /// <summary>
+    /// Her sabah gün döngüsünde (Market/News) çalışır.
+    /// </summary>
+    public void EvaluateDailyPoliceVisit(int currentDay)
+    {
+        // İlk 4 gün oyuncu dükkanını kursun diye denetim gelmez
+        if (currentDay <= 4) return;
+
+        // Şüpheli işlem çoksa nadir ihtimal biraz yükselir (%7 taban + şüphe başına %1)
+        int dynamicChance = Mathf.Clamp(dailyInspectionChance + suspiciousTransactionCount, 1, 20);
+
+        int roll = UnityEngine.Random.Range(1, 101);
+        if (roll <= dynamicChance)
+        {
+            ExecutePoliceInspection();
+        }
+    }
+
+    /// <summary>
+    /// Polisin dükkana girip 4 ana kalemde arama yaptığı denetim fonksiyonu.
+    /// </summary>
+    public PoliceAuditReport ExecutePoliceInspection()
+    {
+        Debug.Log("<color=blue>🚨 [POLİS DENETİMİ BAŞLADI]:</color> Emniyet güçleri ve müfettişler dükkana adım attı!");
+
+        PoliceAuditReport report = new PoliceAuditReport();
+        List<InventoryItem> allItems = InventorySystem.Instance.GetAllItems();
+
+        int stolenCount = 0;
+        int illegalWeaponCount = 0;
+
+        // 1. KONTROL: Envanterdeki Çalıntı Eşyalar (Stolen Items)
+        foreach (var item in allItems)
+        {
+            if (item.authenticity == AuthenticityType.Stolen)
+            {
+                stolenCount++;
+                report.seizedItemNames.Add(item.itemName);
+                InventorySystem.Instance.RemoveItem(item.uniqueID);
+            }
+
+            // 2. KONTROL: Ruhsatsız / Yasadışı Mallar (Illegal Items - Silahlar)
+            if (item.category == ItemCategory.Weapon && item.authenticity != AuthenticityType.Authentic)
+            {
+                illegalWeaponCount++;
+                report.seizedItemNames.Add(item.itemName + " (Ruhsatsız/Kayıtdışı)");
+                InventorySystem.Instance.RemoveItem(item.uniqueID);
+            }
+        }
+
+        // 3. KONTROL: Şüpheli ve Açıklanamayan Fiyatlandırma (Suspicious Transactions)
+        bool hasFinancialIrregularity = suspiciousTransactionCount >= 3;
+
+        // -------------------------------------------------------------
+        // CEZA VE SONUÇ DEĞERLENDİRMESİ
+        // -------------------------------------------------------------
+        if (stolenCount > 0 || illegalWeaponCount > 0)
+        {
+            report.result = PoliceAuditResult.Busted;
+            
+            // Ceza hesabı: Çalıntı başına $2.000, ruhsatsız silah başına $3.500
+            report.fineAmount = (stolenCount * 2000f) + (illegalWeaponCount * 3500f);
+            report.reputationLoss = 25;
+
+            PawnGameManager.Instance.playerCash = Mathf.Max(0f, PawnGameManager.Instance.playerCash - report.fineAmount);
+            PawnGameManager.Instance.shopReputation -= report.reputationLoss;
+
+            report.officerDialogue = $"\"Dükkanınızda {stolenCount} adet çalıntı mal ve {illegalWeaponCount} adet kayıtdışı ürün tespit ettik! " +
+                                     $"Hepsine el koyuyoruz. Ruhsatınızı iptal ettirmediğimize dua edin, ${report.fineAmount:N0} ceza kesildi!\"";
+
+            // Sabıka yendiği için şüpheli sayaç sıfırlanır
+            suspiciousTransactionCount = 0;
+        }
+        else if (hasFinancialIrregularity)
+        {
+            report.result = PoliceAuditResult.WarningIssued;
+            report.fineAmount = 500f; // Usulsüz kayıt cezası
+            report.reputationLoss = 5;
+
+            PawnGameManager.Instance.playerCash = Mathf.Max(0f, PawnGameManager.Instance.playerCash - report.fineAmount);
+            PawnGameManager.Instance.shopReputation -= report.reputationLoss;
+
+            report.officerDialogue = "\"Eşyalarınız temiz görünüyor ancak fatura ve alışveriş kayıtlarınızda piyasa değerinin çok altında şüpheli işlemler var. " +
+                                     "Resmi uyarı ve $500 idari para cezası uyguluyoruz. Gözümüz üstünüzde!\"";
+            suspiciousTransactionCount = 0;
+        }
+        else
+        {
+            report.result = PoliceAuditResult.Clean;
+            report.fineAmount = 0f;
+            report.reputationLoss = 0;
+
+            PawnGameManager.Instance.shopReputation += 5; // Temiz esnaf itibarı artar
+
+            report.officerDialogue = "\"Tüm seri numaraları ve defterleriniz tertemiz. Bölgede sizin gibi yasalara uyan dürüst esnaflara ihtiyacımız var. İyi çalışmalar.\"";
+        }
+
+        Debug.Log($"<color=cyan>[DENETİM RAPORU]:</color> Sonuç: {report.result} | Kesilen Ceza: ${report.fineAmount:N0} | El Konulan Eşya: {report.seizedItemNames.Count}");
+        OnPoliceInspectionStarted?.Invoke(report);
+
+        return report;
+    }
+}
+
+[System.Serializable]
+public class PoliceAuditReport
+{
+    public PoliceAuditResult result;
+    public float fineAmount;
+    public int reputationLoss;
+    public string officerDialogue;
+    public List<string> seizedItemNames = new List<string>();
+}
+
