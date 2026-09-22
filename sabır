@@ -1,0 +1,142 @@
+using System;
+using UnityEngine;
+
+public enum PatienceState
+{
+    Calm,       // Sakin (Sabır > 60)
+    Annoyed,    // Canı sıkkın / Gergin (Sabır: 30 - 60)
+    Furious,    // Patlamak üzere / Son şansı (Sabır: 1 - 29)
+    LostAll     // Sabır bitti (Masayı terk etti / Sıfırlandı)
+}
+
+[System.Serializable]
+public class CustomerPatience
+{
+    [Header("Sabır Değerleri (0 - 100)")]
+    public float maxPatience;     // Müşterinin başlangıç sabrı (Örn: 25 veya 90)
+    public float currentPatience; // O an kalan sabır
+
+    // Olay bildirimleri (UI barını güncellemek için)
+    public event Action<float, float> OnPatienceChanged; // (current, max)
+    public event Action<PatienceState> OnStateChanged;
+
+    public PatienceState CurrentState { get; private set; }
+
+    public CustomerPatience(CustomerTraits traits)
+    {
+        // Traits içindeki patience değerini taban al (20 ile 100 arası)
+        // Aciliyeti aşırı yüksekse başlangıç sabrı bir miktar daha kırpılabilir
+        float calculatedMax = traits.patience;
+        if (traits.urgency > 75)
+        {
+            calculatedMax = Mathf.Clamp(calculatedMax * 0.8f, 15f, 100f);
+        }
+
+        maxPatience = Mathf.Round(calculatedMax);
+        currentPatience = maxPatience;
+        CurrentState = PatienceState.Calm;
+    }
+
+    /// <summary>
+    /// Oyuncunun teklifine ve davranışına göre müşterinin sabrını tüketir.
+    /// </summary>
+    /// <param name="playerOffer">Oyuncunun verdiği teklif</param>
+    /// <param name="expectedPrice">Müşterinin masadaki son istediği fiyat</param>
+    /// <param name="traits">Müşterinin gurur ve kişilik verileri</param>
+    /// <param name="extraDrain">İnceleme gecikmesi veya ters hareketlerden gelen ek kayıp</param>
+    /// <returns>Müşterinin sabrı bitti mi (Terk etti mi?)</returns>
+    public bool DrainPatience(float playerOffer, float expectedPrice, CustomerTraits traits, float extraDrain = 0f)
+    {
+        // 1. Fiyat Farkından Doğan Kızgınlık Hesabı
+        // Teklif ne kadar ölücüyse sabır kaybı o kadar sert olur.
+        float offerRatio = playerOffer / expectedPrice; // Örn: $500 / $1000 = 0.50
+
+        float baseDrain = 0f;
+
+        if (offerRatio >= 0.90f)
+        {
+            // Çok yakın teklif: Müşteri neredeyse hiç kızmaz
+            baseDrain = UnityEngine.Random.Range(3f, 6f);
+        }
+        else if (offerRatio >= 0.70f)
+        {
+            // Makul pazarlık adımı
+            baseDrain = UnityEngine.Random.Range(8f, 15f);
+        }
+        else if (offerRatio >= 0.50f)
+        {
+            // Düşük teklif: Can sıkıcı
+            baseDrain = UnityEngine.Random.Range(18f, 28f);
+        }
+        else
+        {
+            // Hakaret düzeyinde ölü teklif (Örn: %50'den az)
+            // Gururlu müşteride katlanarak artar
+            float prideMultiplier = 1.0f + (traits.pride / 100f); // 1.0 ile 2.0 arası çarpan
+            baseDrain = UnityEngine.Random.Range(30f, 45f) * prideMultiplier;
+        }
+
+        // 2. Toplam Kayıp
+        float totalDrain = baseDrain + extraDrain;
+        currentPatience = Mathf.Max(0f, currentPatience - totalDrain);
+
+        // 3. Durum Kontrolü
+        UpdatePatienceState();
+
+        // UI Event'ini tetikle
+        OnPatienceChanged?.Invoke(currentPatience, maxPatience);
+
+        return currentPatience <= 0;
+    }
+
+    /// <summary>
+    /// Zaman geçtikçe (oyuncu çok düşünürse veya uzun ekspertiz yaparsa) periyodik sabır düşüşü.
+    /// </summary>
+    public void DrainOverTime(float amount)
+    {
+        currentPatience = Mathf.Max(0f, currentPatience - amount);
+        UpdatePatienceState();
+        OnPatienceChanged?.Invoke(currentPatience, maxPatience);
+    }
+
+    private void UpdatePatienceState()
+    {
+        float ratio = currentPatience / maxPatience;
+
+        PatienceState newState;
+        if (currentPatience <= 0) newState = PatienceState.LostAll;
+        else if (ratio < 0.30f) newState = PatienceState.Furious;
+        else if (ratio < 0.65f) newState = PatienceState.Annoyed;
+        else newState = PatienceState.Calm;
+
+        if (newState != CurrentState)
+        {
+            CurrentState = newState;
+            OnStateChanged?.Invoke(CurrentState);
+        }
+    }
+
+    /// <summary>
+    /// Müşterinin sabır durumuna göre söyleyeceği homurdanma / tepki cümlesi.
+    /// </summary>
+    public string GetPatienceDialogueReaction()
+    {
+        switch (CurrentState)
+        {
+            case PatienceState.Calm:
+                return "Acelem yok, mantıklı bir orta yol bulabiliriz.";
+
+            case PatienceState.Annoyed:
+                return "Vaktimi almaya başladın. Lütfen ciddi bir teklifle gel.";
+
+            case PatienceState.Furious:
+                return "Sabrım taştı taşacak! Ya aklı başında bir para söyle ya da masadan kalkıyorum!";
+
+            case PatienceState.LostAll:
+                return "Yetti artık! Seninle iş yapılmaz, gidiyorum!";
+
+            default:
+                return "";
+        }
+    }
+}
