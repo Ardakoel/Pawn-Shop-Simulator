@@ -300,3 +300,181 @@ public static class ShowcaseResaleSystem
     }
 }
 
+using UnityEngine;
+
+public enum ScamType
+{
+    None,                // Dürüst satıcı, yalan yok
+    FakeAsAuthentic,     // Sahte/Çakma ürünü orijinal diye satıyor (Örn: Çakma Rolex)
+    StolenAsInherited,   // Çalıntı malı "dede yadigârı" diye yutturuyor
+    ModifiedSwappedCore, // Kasası orijinal ama içi boşaltılmış (Franken saat / içi boş altın)
+    ExaggeratedCondition // Ağır hasarlı ürünü "Sıfır ayarında / Mint" diye kakalıyor
+}
+
+[System.Serializable]
+public class CustomerClaim
+{
+    public ScamType scamType = ScamType.None;
+    public string verbalClaim;        // Müşterinin iddia ettiği yalan
+    public string nervousTell;        // Yalan söylerken verdiği beden dili ipucu
+    public bool isExposed = false;    // Oyuncu kanıt bulup yalanı yüzüne vurdu mu?
+}
+
+using System;
+using UnityEngine;
+
+public class ScamSystem : MonoBehaviour
+{
+    public static ScamSystem Instance { get; private set; }
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+    }
+
+    /// <summary>
+    /// Müşterinin dürüstlük ve eşya durumuna göre söyleyeceği iddiayı ve varsa yalanı üretir.
+    /// </summary>
+    public CustomerClaim GenerateCustomerClaim(PawnShopItem item, CustomerTraits traits)
+    {
+        CustomerClaim claim = new CustomerClaim();
+
+        // 1. DÜRÜST MÜŞTERİ (Honesty >= 50 veya Mal Zaten Temiz)
+        if (traits.honesty >= 50 && item.overallAuthenticity == AuthenticityType.Authentic)
+        {
+            claim.scamType = ScamType.None;
+            claim.verbalClaim = "Eşyayı uzun süredir özenle sakladım. Orijinal olduğundan adım gibi eminim, buyrun bakın.";
+            claim.nervousTell = "Kendinden emin ve sakin bir ses tonuyla gözlerinizin içine bakıyor.";
+            return claim;
+        }
+
+        // 2. YALANCI / DOLANDIRICI SENARYOLARI (Honesty < 40)
+        // Eşya Sahte ise:
+        if (item.overallAuthenticity == AuthenticityType.Fake || item.overallAuthenticity == AuthenticityType.Replica)
+        {
+            claim.scamType = ScamType.FakeAsAuthentic;
+            claim.verbalClaim = "Yemin ederim %100 orijinal İsviçre/Fabrika malı! Kutusunu taşınırken kaybettim yoksa sertifikası vardı.";
+            claim.nervousTell = traits.honesty < 20 
+                ? "Gözlerini kaçırıyor, ellerini sürekli cebine sokup çıkarıyor." 
+                : "Sorularınıza hızlı ve ezberlenmiş gibi cevaplar veriyor.";
+            return claim;
+        }
+
+        // Eşya Çalıntı ise:
+        if (item.overallAuthenticity == AuthenticityType.Stolen)
+        {
+            claim.scamType = ScamType.StolenAsInherited;
+            claim.verbalClaim = "Rahmetli amcamdan miras kaldı. Faturası falan yok ama aile yadigârıdır, tertemiz eşya.";
+            claim.nervousTell = "Sürekli dükkânın camından dışarıya, sokağa tedirgin bakışlar atıyor.";
+            return claim;
+        }
+
+        // Parçası Değiştirilmiş / Modifiye ise:
+        ItemComponentPart fakeCore = item.components.Find(p => p.realStatus != AuthenticityType.Authentic);
+        if (fakeCore != null)
+        {
+            claim.scamType = ScamType.ModifiedSwappedCore;
+            claim.verbalClaim = "Fabrikadan çıktığı gibi duruyor, vidalarına dahi tornavida değmedi.";
+            claim.nervousTell = "Büyüteci elinize aldığınızda yutkunup boğazını temizliyor.";
+            return claim;
+        }
+
+        // Eşya Dökülüyor ama Müşteri Övüyor ise:
+        if (item.condition <= ItemCondition.Fair && traits.honesty < 30)
+        {
+            claim.scamType = ScamType.ExaggeratedCondition;
+            claim.verbalClaim = "Sadece 1-2 kez kullanıldı, vitrin kondisyonunda sıfır gibi parça.";
+            claim.nervousTell = "Kusurlu olan köşeyi eliyle hafifçe kapatmaya çalışıyor.";
+            return claim;
+        }
+
+        // Varsayılan
+        claim.scamType = ScamType.None;
+        claim.verbalClaim = "Fiyat konusunda anlaşırsak hemen bırakmak istiyorum.";
+        claim.nervousTell = "Sıradan bir tavır sergiliyor.";
+        return claim;
+    }
+
+    /// <summary>
+    /// Oyuncu inceleme yaptığında veya eksper çağırdığında müşterinin yalanını çürütür.
+    /// </summary>
+    public bool VerifyClaimWithEvidence(CustomerClaim claim, PawnShopItem inspectedItem, ref string confrontationDialogue)
+    {
+        if (claim.scamType == ScamType.None)
+        {
+            confrontationDialogue = "Müşteri doğruyu söylüyor, eşyada iddia hilafına bir sahtelik yok.";
+            return false;
+        }
+
+        // İnceleme sonucunda yalanın ispatı
+        bool evidenceFound = false;
+
+        switch (claim.scamType)
+        {
+            case ScamType.FakeAsAuthentic:
+                if (inspectedItem.authenticity == AuthenticityType.Fake || inspectedItem.authenticity == AuthenticityType.Replica)
+                {
+                    evidenceFound = true;
+                    confrontationDialogue = "Oyuncu: 'Orijinal dedin ama mihenk taşı/büyüteç testi malın bariz sahte bir replika olduğunu gösteriyor!'";
+                }
+                break;
+
+            case ScamType.StolenAsInherited:
+                if (inspectedItem.authenticity == AuthenticityType.Stolen || inspectedItem.isIdentified)
+                {
+                    evidenceFound = true;
+                    confrontationDialogue = "Oyuncu: 'Amcamdan kaldı diyorsun ama seri numarasında çalıntı ihbarı kaydı var!'";
+                }
+                break;
+
+            case ScamType.ModifiedSwappedCore:
+                ItemComponentPart badPart = inspectedItem.components.Find(p => p.realStatus != AuthenticityType.Authentic);
+                if (badPart != null)
+                {
+                    evidenceFound = true;
+                    confrontationDialogue = $"Oyuncu: 'Tornavida değmedi dedin ama {badPart.partName} sökülüp yerine çakma parça takılmış!'";
+                }
+                break;
+
+            case ScamType.ExaggeratedCondition:
+                if (inspectedItem.condition <= ItemCondition.Fair)
+                {
+                    evidenceFound = true;
+                    confrontationDialogue = "Oyuncu: 'Sıfır ayarında dediğin cihazın kasasında derin çatlaklar ve darbe izi var!'";
+                }
+                break;
+        }
+
+        if (evidenceFound)
+        {
+            claim.isExposed = true;
+        }
+
+        return evidenceFound;
+    }
+
+    /// <summary>
+    /// Yalanı yüzüne vurulan müşterinin vereceği tepkiyi çözer.
+    /// </summary>
+    public string ResolveCaughtReaction(CustomerTraits traits, ref float customerPrice)
+    {
+        // 1. Durum: Panikleyip kaçma (Aşırı sahtekar ve korkak)
+        if (traits.urgency > 70 || traits.trustworthiness < 25)
+        {
+            return "<color=red>[PANİKLEYİP KAÇTI]:</color> 'B-ben bir arkadaşa sorup geleyim...' Eşyayı masadan kapıp kapıya koştu!";
+        }
+        // 2. Durum: Gururlu blöf / İnkar
+        else if (traits.pride > 70)
+        {
+            return "<color=yellow>[BLÖF YAPTI]:</color> 'Sen bu işten zerre anlamıyorsun! Başka dükkana giderim!'";
+        }
+        // 3. Durum: Yakalandığını kabul edip fiyatı öldürme
+        else
+        {
+            customerPrice *= 0.30f; // Fiyatı %70 kırar
+            return $"<color=cyan>[İTİRAF ETTİ]:</color> 'Tamam usta yakaladın... Şeytan dürttü işte. ${customerPrice:N0} ver de başım ağrımadan gideyim.'";
+        }
+    }
+}
+
