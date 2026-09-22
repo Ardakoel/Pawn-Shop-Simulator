@@ -1,0 +1,337 @@
+using System.Collections.Generic;
+using UnityEngine;
+
+[CreateAssetMenu(fileName = "ItemDatabase", menuName = "PawnShop/Item Database")]
+public class ItemDatabase : ScriptableObject
+{
+    public List<ItemTemplate> templates = new List<ItemTemplate>();
+
+    public ItemTemplate GetRandomTemplate(ItemCategory? filterCategory = null)
+    {
+        List<ItemTemplate> pool = filterCategory.HasValue 
+            ? templates.FindAll(t => t.category == filterCategory.Value) 
+            : templates;
+
+        if (pool == null || pool.Count == 0) return null;
+        int index = RandomService.Instance != null 
+            ? RandomService.Instance.RangeInt(RandomChannel.ItemGeneration, 0, pool.Count)
+            : Random.Range(0, pool.Count);
+
+        return pool[index];
+    }
+}
+
+[System.Serializable]
+public class ItemTemplate
+{
+    public string templateID;
+    public string baseName;
+    public ItemCategory category;
+    public float baseMarketValue;
+    [Range(0, 100)] public float counterfeitRiskRate; // Bu eşyanın sahte çıkma taban ihtimali
+    public bool requiresAppraisal;                    // Eksper şartı var mı?
+    public Sprite itemIcon;
+}
+
+using UnityEngine;
+
+public class MasterGameLoop : MonoBehaviour
+{
+    public static MasterGameLoop Instance { get; private set; }
+
+    [Header("Veritabanı Referansları")]
+    public ItemDatabase itemDatabase;
+
+    [Header("Oturum Durumu")]
+    public CustomerData currentCustomer;
+    public PawnShopItem currentItemOnCounter;
+    public bool isSessionActive = false;
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+    }
+
+    private void Start()
+    {
+        // Save dosyası varsa yükle, yoksa yeni oyunu başlat
+        if (SaveSystem.Instance != null && SaveSystem.Instance.HasSaveFile())
+        {
+            SaveSystem.Instance.LoadGame();
+        }
+        else
+        {
+            StartNewGame();
+        }
+    }
+
+    public void StartNewGame()
+    {
+        PawnGameManager.Instance.playerCash = 3500f; // Başlangıç sermayesi
+        Debug.Log("<color=green>Yeni oyun başlatıldı. Başlangıç kasası: $3,500</color>");
+    }
+
+    /// <summary>
+    /// UI'daki "Sıradaki Müşteriyi Al" butonunun tetikleyeceği fonksiyon.
+    /// </summary>
+    public void CallNextCustomer()
+    {
+        if (isSessionActive) return;
+
+        // 1. Müşteri Üret
+        currentCustomer = CustomerPoolManager.Instance.GenerateCustomer();
+
+        // 2. Müşterinin Getireceği Eşyayı Üret
+        ItemTemplate template = itemDatabase.GetRandomTemplate();
+        currentItemOnCounter = ItemGenerator.GenerateItemFromTemplate(template);
+
+        // 3. Hafıza ve İlişki Modifiyerlerini Uygula
+        var memory = CustomerMemorySystem.Instance.RetrieveOrCreateMemory(currentCustomer.fullName);
+        CustomerMemorySystem.Instance.ApplyMemoryModifiersToTraits(memory, currentCustomer.traits);
+
+        // 4. Dolandırıcılık İddiasını Üret (Yalan söylüyor mu?)
+        var claim = ScamSystem.Instance.GenerateCustomerClaim(currentItemOnCounter, currentCustomer.traits);
+
+        // 5. Pazarlığı Başlat
+        NegotiationSystem.Instance.StartNegotiation(currentCustomer, currentItemOnCounter);
+
+        isSessionActive = true;
+        Debug.Log($"<color=cyan>[YENİ MÜŞTERİ]:</color> {currentCustomer.fullName} masaya bir {currentItemOnCounter.customName} koydu.");
+    }
+
+    /// <summary>
+    /// Eşya satın alındığında veya masa dağıldığında seansı sonlandırır.
+    /// </summary>
+    public void EndCurrentSession(bool dealClosed, float finalPrice = 0f)
+    {
+        if (!isSessionActive) return;
+
+        DealOutcomeHistory outcome = dealClosed ? DealOutcomeHistory.SuccessfulDeal : DealOutcomeHistory.WalkedAwayPatience;
+
+        // Müşteri hafızasını ve ilişkisini güncelle
+        CustomerMemorySystem.Instance.UpdateMemoryAfterDeal(
+            currentCustomer.fullName,
+            currentItemOnCounter.customName,
+            finalPrice,
+            finalPrice,
+            outcome
+        );
+
+        if (dealClosed)
+        {
+            CustomerRelationshipSystem.Instance.RecordTradeSuccess(currentCustomer.fullName, false);
+            TransactionSystem.Instance.LogPurchase(currentItemOnCounter, finalPrice, currentCustomer.fullName, $"Day {DaySystem.Instance.currentDay}");
+            
+            // Eğer çalıntıysa adli takip sistemine kaydet
+            if (currentItemOnCounter.overallAuthenticity == AuthenticityType.Stolen)
+            {
+                StolenItemSystem.Instance.RegisterStolenItem(
+                    InventorySystem.Instance.GetItem(currentItemOnCounter.serialNumber), 
+                    "Eski Hak Sahibi", 
+                    currentCustomer.fullName
+                );
+            }
+        }
+        else
+        {
+            CustomerRelationshipSystem.Instance.RecordTradeInsult(currentCustomer.fullName);
+        }
+
+        isSessionActive = false;
+        currentCustomer = null;
+        currentItemOnCounter = null;
+    }
+}
+
+using System.Collections.Generic;
+using UnityEngine;
+
+public enum CustomerIntent
+{
+    SellingToPlayer,  // Müşteri eşya satmaya geldi (Oyuncu Alıcı)
+    BuyingFromPlayer  // Müşteri vitrinden eşya almaya geldi (Oyuncu Satıcı)
+}
+
+public class MasterGameLoop : MonoBehaviour
+{
+    public static MasterGameLoop Instance { get; private set; }
+
+    [Header("Veritabanı & Referanslar")]
+    public ItemDatabase itemDatabase;
+
+    [Header("Müşteri Niyeti Oranları")]
+    [Range(0, 100)] public int buyerCustomerChance = 35; // %35 ihtimalle alıcı müşteri gelir
+
+    [Header("Aktif Oturum Bilgileri")]
+    public bool isSessionActive = false;
+    public CustomerIntent currentIntent;
+    public CustomerData currentCustomer;
+    
+    // Satıcı geldiyse bu dolar:
+    public PawnShopItem itemBroughtByCustomer;
+    
+    // Alıcı geldiyse bu dolar:
+    public InventoryItem itemTargetedByBuyer;
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+    }
+
+    /// <summary>
+    /// UI'daki "Sıradaki Müşteriyi Çağır" (Zil / Kapı Butonu) burayı tetikler.
+    /// </summary>
+    public void CallNextCustomer()
+    {
+        if (isSessionActive)
+        {
+            Debug.LogWarning("Masada zaten bir müşteri var! Önce mevcut işlemi bitirin.");
+            return;
+        }
+
+        // 1. Müşteri Karakterini Üret
+        currentCustomer = CustomerPoolManager.Instance.GenerateCustomer();
+
+        // 2. Müşteri Hafızası ve İlişki Modifiyerlerini Yükle
+        var memory = CustomerMemorySystem.Instance.RetrieveOrCreateMemory(currentCustomer.fullName);
+        CustomerMemorySystem.Instance.ApplyMemoryModifiersToTraits(memory, currentCustomer.traits);
+
+        // 3. Niyet Belirleme (Alıcı mı Satıcı mı?)
+        // Vitrinde satılık eşya var mı kontrol et
+        List<InventoryItem> showcaseItems = InventorySystem.Instance != null 
+            ? InventorySystem.Instance.GetItemsForSale() 
+            : new List<InventoryItem>();
+
+        bool rollForBuyer = RandomService.Instance != null 
+            ? RandomService.Instance.CheckSuccess(RandomChannel.CustomerGeneration, buyerCustomerChance)
+            : (Random.Range(0, 100) < buyerCustomerChance);
+
+        // Vitrinde eşya varsa ve zar tuttuysa -> ALICI MÜŞTERİ GELİR
+        if (showcaseItems.Count > 0 && rollForBuyer)
+        {
+            SetupBuyerSession(showcaseItems);
+        }
+        else
+        {
+            // Vitrin boşsa veya zar satıcı çıktıysa -> SATICI MÜŞTERİ GELİR
+            SetupSellerSession();
+        }
+
+        isSessionActive = true;
+    }
+
+    // -------------------------------------------------------------------------
+    // 1. DURUM: EŞYA SATMAYA GELEN MÜŞTERİ (SELLER)
+    // -------------------------------------------------------------------------
+    private void SetupSellerSession()
+    {
+        currentIntent = CustomerIntent.SellingToPlayer;
+
+        // Veritabanından rastgele eşya üret
+        ItemTemplate template = itemDatabase.GetRandomTemplate();
+        itemBroughtByCustomer = ItemGenerator.GenerateItemFromTemplate(template);
+
+        // Dolandırıcılık iddiası ve beden dili ipuçlarını oluştur
+        var claim = ScamSystem.Instance.GenerateCustomerClaim(itemBroughtByCustomer, currentCustomer.traits);
+
+        // Eski dost / düşman diyaloğunu al
+        string memoryGreeting = CustomerMemorySystem.Instance.GenerateMemoryGreeting(
+            CustomerMemorySystem.Instance.RetrieveOrCreateMemory(currentCustomer.fullName), 
+            currentCustomer.traits
+        );
+
+        Debug.Log($"<color=yellow>[MÜŞTERİ GELDİ - SATICI]:</color> {currentCustomer.fullName} içeri girdi.");
+        Debug.Log($"Getirdiği Parça: <b>{itemBroughtByCustomer.customName}</b> | İddiası: \"{claim.verbalClaim}\"");
+
+        // Alım pazarlığı motorunu başlat (Oyuncu pazarlıkla fiyatı kırmaya çalışır)
+        NegotiationSystem.Instance.StartNegotiation(currentCustomer, itemBroughtByCustomer);
+    }
+
+    // -------------------------------------------------------------------------
+    // 2. DURUM: EŞYA SATIN ALMAYA GELEN MÜŞTERİ (BUYER)
+    // -------------------------------------------------------------------------
+    private void SetupBuyerSession(List<InventoryItem> showcaseItems)
+    {
+        currentIntent = CustomerIntent.BuyingFromPlayer;
+
+        // Vitrindeki eşyalardan rastgele birini gözüne kestirir
+        int selectedIndex = RandomService.Instance != null 
+            ? RandomService.Instance.RangeInt(RandomChannel.CustomerGeneration, 0, showcaseItems.Count)
+            : Random.Range(0, showcaseItems.Count);
+
+        itemTargetedByBuyer = showcaseItems[selectedIndex];
+
+        Debug.Log($"<color=cyan>[MÜŞTERİ GELDİ - ALICI]:</color> {currentCustomer.fullName} vitrindeki bir eşyaya talip oldu!");
+        Debug.Log($"Hedef Eşya: <b>{itemTargetedByBuyer.itemName}</b> (Alış Maliyetimiz: ${itemTargetedByBuyer.purchasePrice:N0})");
+
+        // Alıcı pazarlık motorunu başlat (Eksper kontrolü, oyuncunun fiyat istemesi vs.)
+        BuyerTurnResult buyerResult = BuyerSessionSystem.Instance.StartBuyerSession(currentCustomer, itemTargetedByBuyer);
+
+        // Eğer saat/tablo ekspertizsiz olduğu için anında vazgeçtiyse seansı kapat
+        if (buyerResult.outcome == BuyerNegotiationOutcome.RejectedNoAppraisal)
+        {
+            EndCurrentSession(false);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // SEANSI BİTİRME (ANLAŞMA SAĞLANDI VEYA MASA DAĞILDI)
+    // -------------------------------------------------------------------------
+    public void EndCurrentSession(bool dealClosed, float finalPrice = 0f)
+    {
+        if (!isSessionActive) return;
+
+        DealOutcomeHistory outcome = dealClosed ? DealOutcomeHistory.SuccessfulDeal : DealOutcomeHistory.WalkedAwayPatience;
+        string itemName = (currentIntent == CustomerIntent.SellingToPlayer) ? itemBroughtByCustomer.customName : itemTargetedByBuyer.itemName;
+
+        // Müşteri hafızasını güncelle
+        CustomerMemorySystem.Instance.UpdateMemoryAfterDeal(
+            currentCustomer.fullName,
+            itemName,
+            finalPrice,
+            finalPrice,
+            outcome
+        );
+
+        if (dealClosed)
+        {
+            CustomerRelationshipSystem.Instance.RecordTradeSuccess(currentCustomer.fullName, false);
+
+            if (currentIntent == CustomerIntent.SellingToPlayer)
+            {
+                // Kasadan para çıktı, envantere eşya girdi
+                TransactionSystem.Instance.LogPurchase(itemBroughtByCustomer, finalPrice, currentCustomer.fullName, $"Day {DaySystem.Instance.currentDay}");
+
+                // Çalıntı mal ise gizli polis radarına sok
+                if (itemBroughtByCustomer.overallAuthenticity == AuthenticityType.Stolen)
+                {
+                    StolenItemSystem.Instance.RegisterStolenItem(
+                        InventorySystem.Instance.GetItem(itemBroughtByCustomer.serialNumber),
+                        "Eski Hak Sahibi",
+                        currentCustomer.fullName
+                    );
+                }
+            }
+            else
+            {
+                // Kasaya para girdi, vitrinden eşya çıktı
+                TransactionSystem.Instance.LogSale(itemTargetedByBuyer, finalPrice, currentCustomer.fullName, $"Day {DaySystem.Instance.currentDay}");
+            }
+        }
+        else
+        {
+            CustomerRelationshipSystem.Instance.RecordTradeInsult(currentCustomer.fullName);
+        }
+
+        // Değişkenleri temizle
+        isSessionActive = false;
+        currentCustomer = null;
+        itemBroughtByCustomer = null;
+        itemTargetedByBuyer = null;
+
+        Debug.Log("<color=grey>[SEANS BİTTİ]: Tezgâh boşaltıldı, sıradaki müşteri çağrılabilir.</color>");
+    }
+}
+
