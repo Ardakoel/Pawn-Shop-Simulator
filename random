@@ -1,0 +1,176 @@
+public enum RandomChannel
+{
+    CustomerGeneration, // Müşteri ismi, görünüşü, gizli özellikleri
+    ItemGeneration,     // Eşya tipi, sahtelik durumu, seri numarası
+    MarketAndEconomy,   // Piyasa dalgalanmaları, gazete manşetleri
+    EventsAndPolice,    // Hırsızlık, polis baskını, sürpriz ziyaretler
+    NegotiationAndTwist // Pazarlık zarları, son saniye kararsızlıkları
+}
+
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+[System.Serializable]
+public class ChannelStateData
+{
+    public RandomChannel channel;
+    public int currentSeed;
+    public int invocationCount; // Kaç kez zar atıldı? (State senkronizasyonu için)
+}
+
+public class RandomService : MonoBehaviour
+{
+    public static RandomService Instance { get; private set; }
+
+    [Header("Master Seed Yapılandırması")]
+    [SerializeField] private int masterSeed = 1337;
+    [SerializeField] private bool useSystemTimeSeedOnStart = false;
+
+    // Her kanalın kendi bağımsız Unity Random State'i
+    private Dictionary<RandomChannel, UnityEngine.Random.State> channelStates = new Dictionary<RandomChannel, UnityEngine.Random.State>();
+    private Dictionary<RandomChannel, int> invocationCounters = new Dictionary<RandomChannel, int>();
+
+    private void Awake()
+    {
+        if (Instance == null)
+        {
+            Instance = this;
+            DontDestroyOnLoad(gameObject);
+            InitializeSeedSystem();
+        }
+        else
+        {
+            Destroy(gameObject);
+        }
+    }
+
+    /// <summary>
+    /// Master Seed'den tüm kanallar için deterministik başlangıç durumları türetir.
+    /// </summary>
+    public void InitializeSeedSystem(int? customSeed = null)
+    {
+        if (customSeed.HasValue)
+        {
+            masterSeed = customSeed.Value;
+        }
+        else if (useSystemTimeSeedOnStart)
+        {
+            masterSeed = (int)DateTime.UtcNow.Ticks;
+        }
+
+        channelStates.Clear();
+        invocationCounters.Clear();
+
+        // Master Seed'i kullanarak her kanal için deterministik alt tohumlar üret
+        UnityEngine.Random.InitState(masterSeed);
+
+        foreach (RandomChannel channel in Enum.GetValues(typeof(RandomChannel)))
+        {
+            int subSeed = UnityEngine.Random.Range(int.MinValue, int.MaxValue);
+            
+            // Kanal state'ini başlat ve kaydet
+            UnityEngine.Random.InitState(subSeed);
+            channelStates[channel] = UnityEngine.Random.state;
+            invocationCounters[channel] = 0;
+        }
+
+        Debug.Log($"<color=cyan>[RANDOM SERVICE]:</color> Master Seed <b>{masterSeed}</b> ile tüm alt kanallar senkronize edildi.");
+    }
+
+    // -----------------------------------------------------------------
+    // KANAL BAZLI ZAR ATIM METOTLARI
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// Belirli bir kanal için [min, max) aralığında int döner.
+    /// </summary>
+    public int RangeInt(RandomChannel channel, int min, int max)
+    {
+        RestoreChannelState(channel);
+
+        int result = UnityEngine.Random.Range(min, max);
+        RecordChannelState(channel);
+
+        return result;
+    }
+
+    /// <summary>
+    /// Belirli bir kanal için [min, max] aralığında float döner.
+    /// </summary>
+    public float RangeFloat(RandomChannel channel, float min, float max)
+    {
+        RestoreChannelState(channel);
+
+        float result = UnityEngine.Random.Range(min, max);
+        RecordChannelState(channel);
+
+        return result;
+    }
+
+    /// <summary>
+    /// 0.0f ile 1.0f arasında float değer döner.
+    /// </summary>
+    public float Value(RandomChannel channel)
+    {
+        return RangeFloat(channel, 0f, 1f);
+    }
+
+    /// <summary>
+    /// Belirtilen yüzde ihtimali (0 - 100) test eder.
+    /// </summary>
+    public bool CheckSuccess(RandomChannel channel, float chancePercentage)
+    {
+        return RangeFloat(channel, 0f, 100f) <= chancePercentage;
+    }
+
+    /// <summary>
+    /// Bir diziden veya listeden deterministik rastgele eleman seçer.
+    /// </summary>
+    public T PickRandom<T>(RandomChannel channel, IList<T> collection)
+    {
+        if (collection == null || collection.Count == 0) return default;
+        int index = RangeInt(channel, 0, collection.Count);
+        return collection[index];
+    }
+
+    // -----------------------------------------------------------------
+    // STATE YÖNETİMİ
+    // -----------------------------------------------------------------
+    private void RestoreChannelState(RandomChannel channel)
+    {
+        if (channelStates.ContainsKey(channel))
+        {
+            UnityEngine.Random.state = channelStates[channel];
+        }
+    }
+
+    private void RecordChannelState(RandomChannel channel)
+    {
+        channelStates[channel] = UnityEngine.Random.state;
+        invocationCounters[channel]++;
+    }
+
+    /// <summary>
+    /// Save dosyasına yazılacak tohum verilerini çıkarır.
+    /// </summary>
+    public int GetCurrentMasterSeed() => masterSeed;
+}
+
+                                // Müşteri trait zarı Item veya Market zincirini etkilemez
+int debt = RandomService.Instance.RangeInt(RandomChannel.CustomerGeneration, 0, 101);
+int honesty = RandomService.Instance.RangeInt(RandomChannel.CustomerGeneration, 10, 100);
+
+
+ // Eşyanın sahte çıkma ihtimali Item kanalından çekilir
+bool isFake = RandomService.Instance.CheckSuccess(RandomChannel.ItemGeneration, 25f);
+
+
+                                // Günlük borsa çarpanı Market kanalından üretilir
+float trendShift = RandomService.Instance.RangeFloat(RandomChannel.MarketAndEconomy, -0.25f, 0.35f);
+
+
+                                // %7'lik nadir polis baskını zarı
+bool policeRaid = RandomService.Instance.CheckSuccess(RandomChannel.EventsAndPolice, 7f);
+
+
