@@ -1,0 +1,213 @@
+using System;
+using UnityEngine;
+
+public enum NewsImpactType
+{
+    PriceBoost,     // Fiyat ve talep patlaması (+%10 ile +%50)
+    PriceCrash,     // Piyasa çöküşü (-%10 ile -%40)
+    PoliceCrackdown,// Polis baskını / sıkı denetim (Çalıntı mallar riskli hale gelir)
+    ScamAlert       // Piyasada sahte mal alarmı (Ekspertiz talebi artar)
+}
+
+[System.Serializable]
+public class NewsArticle
+{
+    public string headline;          // Gazete Manşeti
+    [TextArea(2, 4)]
+    public string storyDetails;      // Haberin detay metni
+    public ItemCategory affectedCategory;
+    public NewsImpactType impactType;
+    public float impactPercentage;   // Örn: +0.25f (+%25)
+    public int durationDays;         // Bu haberin piyasaya etkisi kaç gün sürecek? (Örn: 2 gün)
+
+    public NewsArticle(string title, string story, ItemCategory cat, NewsImpactType impact, float percent, int duration)
+    {
+        headline = title;
+        storyDetails = story;
+        affectedCategory = cat;
+        impactType = impact;
+        impactPercentage = percent;
+        durationDays = duration;
+    }
+}
+
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+public class NewsSystem : MonoBehaviour
+{
+    public static NewsSystem Instance { get; private set; }
+
+    [Header("Aktif Haberler & Etkiler")]
+    public NewsArticle todayMainStory;
+    [SerializeField] private List<NewsArticle> ongoingNewsEffects = new List<NewsArticle>();
+
+    // Olay Bildirimi: Sabah gazete arayüzünü açmak için
+    public event Action<NewsArticle> OnMorningPaperPublished;
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+    }
+
+    /// <summary>
+    /// Yeni gün başladığında MarketSystem tarafından tetiklenir.
+    /// </summary>
+    public void PublishMorningNews(int dayNumber)
+    {
+        // 1. Süresi biten eski haber etkilerini temizle / gün sayısını azalt
+        for (int i = ongoingNewsEffects.Count - 1; i >= 0; i--)
+        {
+            ongoingNewsEffects[i].durationDays--;
+            if (ongoingNewsEffects[i].durationDays <= 0)
+            {
+                Debug.Log($"<color=grey>[PİYASA NORMALE DÖNDÜ]:</color> {ongoingNewsEffects[i].affectedCategory.ToDisplayName()} üzerindeki haber etkisi sona erdi.");
+                ongoingNewsEffects.RemoveAt(i);
+            }
+        }
+
+        // 2. Bugünün yeni manşetini rastgele üret
+        todayMainStory = GenerateRandomArticle();
+        ongoingNewsEffects.Add(todayMainStory);
+
+        // 3. Konsola ve UI'a bildir
+        Debug.Log($"<color=yellow>📰 [GÜN {dayNumber} GAZETESİ - MANŞET] 📰</color>\n" +
+                  $"<color=white><b>{todayMainStory.headline}</b></color>\n" +
+                  $"{todayMainStory.storyDetails}\n" +
+                  $"<color=cyan>Piyasa Etkisi: {todayMainStory.affectedCategory.ToDisplayName()} {(todayMainStory.impactPercentage >= 0 ? "+" : "")}%{todayMainStory.impactPercentage * 100:0} (Süre: {todayMainStory.durationDays} gün)</color>");
+
+        OnMorningPaperPublished?.Invoke(todayMainStory);
+    }
+
+    /// <summary>
+    /// Belirli bir kategorinin haberlerden kaynaklanan toplam fiyat çarpanını döndürür.
+    /// </summary>
+    public float GetCategoryNewsMultiplier(ItemCategory category)
+    {
+        float totalMultiplier = 1.0f;
+        foreach (var news in ongoingNewsEffects)
+        {
+            if (news.affectedCategory == category)
+            {
+                totalMultiplier += news.impactPercentage;
+            }
+        }
+        return Mathf.Clamp(totalMultiplier, 0.4f, 2.0f);
+    }
+
+    /// <summary>
+    /// Piyasada aktif bir polis baskını haberi var mı? (Çalıntı mal alanları yakalatmak için)
+    /// </summary>
+    public bool IsPoliceCrackdownActive()
+    {
+        return ongoingNewsEffects.Exists(n => n.impactType == NewsImpactType.PoliceCrackdown);
+    }
+
+    // -------------------------------------------------------------
+    // ZENGİN HABER VERİTABANI & RASTGELE ÜRETİCİ
+    // -------------------------------------------------------------
+    private NewsArticle GenerateRandomArticle()
+    {
+        int roll = UnityEngine.Random.Range(0, 8);
+
+        switch (roll)
+        {
+            case 0:
+                return new NewsArticle(
+                    "Ünlü Aktör Vintage Saat Koleksiyonunu Satışa Çıkarıyor!",
+                    "Hollywood yıldızının retro saat tercihi New York sosyetesinde akım başlattı. Klasik ve vintage saatlere talep patladı.",
+                    ItemCategory.Watch,
+                    NewsImpactType.PriceBoost,
+                    0.25f, // +%25
+                    3
+                );
+
+            case 1:
+                return new NewsArticle(
+                    "Merkez Bankası'ndan Sürpriz Karar: Değerli Madenler Tırmanışta!",
+                    "Enflasyon baskısıyla altına ve gümüşe hücum başladı. Kuyumcular ve rehin dükkanlarında külçe/takı fiyatları yükseliyor.",
+                    ItemCategory.Jewelry,
+                    NewsImpactType.PriceBoost,
+                    0.30f, // +%30
+                    2
+                );
+
+            case 2:
+                return new NewsArticle(
+                    "Büyük Dolandırıcılık Şebekesi Çökertildi: Piyasada Sahte Tablo Alarmı!",
+                    "Metropolitan bölgesinde faaliyet gösteren bir sahte sanat atölyesi basıldı. Koleksiyonerler tablo alımlarını durdurdu.",
+                    ItemCategory.Painting,
+                    NewsImpactType.PriceCrash,
+                    -0.25f, // -%25
+                    2
+                );
+
+            case 3:
+                return new NewsArticle(
+                    "Emniyetten Rehin Dükkanlarına Eş Zamanlı Denetim!",
+                    "Son dönemde artan hırsızlık olayları nedeniyle polis ekipleri tezgahlardaki seri numaralarını sıkı takibe aldı.",
+                    ItemCategory.Electronics,
+                    NewsImpactType.PoliceCrackdown,
+                    -0.15f,
+                    2
+                );
+
+            case 4:
+                return new NewsArticle(
+                    "Eski Rock Efsanesinin Vefatı Gitarlara Olan İlgiyi Patlattı!",
+                    "Efsanevi gitaristin ardından müzik mağazalarında vintage enstrümanlar ve lambalı amfiler karaborsaya düştü.",
+                    ItemCategory.Instrument,
+                    NewsImpactType.PriceBoost,
+                    0.35f, // +%35
+                    3
+                );
+
+            case 5:
+                return new NewsArticle(
+                    "Çip Üretiminde Kriz: İkinci El Telefon ve Konsollar Değerlendi!",
+                    "Yurt dışı sevkiyatlarındaki aksamalar nedeniyle mağazalarda sıfır ürün bulunamıyor. Temiz elektronik cihazlar prim yapıyor.",
+                    ItemCategory.Electronics,
+                    NewsImpactType.PriceBoost,
+                    0.20f, // +%20
+                    2
+                );
+
+            case 6:
+                return new NewsArticle(
+                    "Nadir Darphane Parası Müzayedede 1 Milyon Dolara Alıcı Buldu!",
+                    "Tarihi madeni para ve sikke koleksiyonculuğu yeniden popüler hale geldi. Amatörler eski paraları araştırmaya başladı.",
+                    ItemCategory.Coin,
+                    NewsImpactType.PriceBoost,
+                    0.40f, // +%40
+                    4
+                );
+
+            case 7:
+            default:
+                return new NewsArticle(
+                    "Lüks Replika Saat Skandalı: Pazar Güven Kaybetti!",
+                    "Piyasadaki her 3 lüks saatten birinin modifiye sahte olduğu ortaya çıktı. Alıcılar eksper raporu olmadan adım atmıyor.",
+                    ItemCategory.Watch,
+                    NewsImpactType.PriceCrash,
+                    -0.20f, // -%20
+                    2
+                );
+        }
+    }
+}
+
+public float GetMarketMultiplier(ItemCategory category)
+{
+    // Temel trend çarpanı
+    MarketTrend trend = activeTrends.Find(t => t.category == category);
+    float baseMultiplier = trend != null ? trend.CurrentMultiplier : 1.0f;
+
+    // Haber sisteminden gelen sıcak manşet etkisi
+    float newsMultiplier = NewsSystem.Instance != null 
+        ? NewsSystem.Instance.GetCategoryNewsMultiplier(category) 
+        : 1.0f;
+
+    return baseMultiplier * newsMultiplier;
+}
