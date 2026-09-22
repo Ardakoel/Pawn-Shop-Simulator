@@ -1,0 +1,220 @@
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+public enum EventType
+{
+    ThiefRobbery,       // Hırsız girdi: Eşyaların 1/3'ü, paranın 1/4'ü gider
+    CelebrityVisit,     // Ünlü biri geldi: Yüksek bütçeli alıcı, itibar patlaması
+    PoliceInspection,   // Polis baskını: Çalıntı eşya varsa ceza + el koyma
+    MarketCrash,        // Ani piyasa çöküşü: Tüm fiyatlar geçici düşer
+    RareItemOffered,    // Nadir/Efsanevi eşya getiren gizemli satıcı
+    CounterfeitWave,    // Sahte eşya furyası: Gün boyu sahte mal ihtimali fırlar
+    RivalShopOpened     // Rakip dükkan açıldı: Müşteri trafiği ve kâr marjı daralır
+}
+
+[System.Serializable]
+public class RandomEventOutcome
+{
+    public EventType eventType;
+    public string title;
+    [TextArea(2, 4)]
+    public string description;
+    public string effectSummary;
+}
+
+public class RandomEventSystem : MonoBehaviour
+{
+    public static RandomEventSystem Instance { get; private set; }
+
+    [Header("Olay Tetiklenme Olasılığı")]
+    [Range(0, 100)] public int dailyEventChance = 45; // Her sabah %45 ihtimalle özel bir olay patlar
+
+    public event Action<RandomEventOutcome> OnRandomEventTriggered;
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+    }
+
+    /// <summary>
+    /// Her sabah gün döngüsünde çağrılır (MarketSystem / Gün sonu tetikler).
+    /// </summary>
+    public void CheckForDailyEvent(int currentDay)
+    {
+        // İlk 2 gün oyuncu dükkanı öğrensin diye olay tetikleme
+        if (currentDay <= 2) return;
+
+        int roll = UnityEngine.Random.Range(1, 101);
+        if (roll <= dailyEventChance)
+        {
+            TriggerRandomEvent();
+        }
+    }
+
+    /// <summary>
+    /// Rastgele bir olayı seçer ve etkilerini uygular.
+    /// </summary>
+    public void TriggerRandomEvent()
+    {
+        // Ağırlıklı olay seçimi
+        int eventRoll = UnityEngine.Random.Range(0, 7);
+        EventType selectedType = (EventType)eventRoll;
+
+        RandomEventOutcome outcome = new RandomEventOutcome { eventType = selectedType };
+
+        switch (selectedType)
+        {
+            case EventType.ThiefRobbery:
+                ExecuteRobbery(ref outcome);
+                break;
+
+            case EventType.CelebrityVisit:
+                ExecuteCelebrityVisit(ref outcome);
+                break;
+
+            case EventType.PoliceInspection:
+                ExecutePoliceRaid(ref outcome);
+                break;
+
+            case EventType.MarketCrash:
+                ExecuteMarketCrash(ref outcome);
+                break;
+
+            case EventType.RareItemOffered:
+                ExecuteRareItemArrival(ref outcome);
+                break;
+
+            case EventType.CounterfeitWave:
+                ExecuteCounterfeitWave(ref outcome);
+                break;
+
+            case EventType.RivalShopOpened:
+                ExecuteRivalShop(ref outcome);
+                break;
+        }
+
+        Debug.Log($"<color=red>⚠️ [ÖZEL OLAY TETİKLENDİ]: {outcome.title} ⚠️</color>\n{outcome.description}\n<color=yellow>{outcome.effectSummary}</color>");
+        OnRandomEventTriggered?.Invoke(outcome);
+    }
+
+    // -------------------------------------------------------------
+    // 1. HIRSIZLIK (EŞYALARIN 1/3'Ü, PARANIN 1/4'Ü ÇALINIR)
+    // -------------------------------------------------------------
+    private void ExecuteRobbery(ref RandomEventOutcome outcome)
+    {
+        outcome.title = "DÜKKANA HIRSIZ GİRDİ!";
+        
+        // 1. Nakit kaybı: Paranın tam 1/4'ü (%25) kesin gider
+        float currentCash = PawnGameManager.Instance.playerCash;
+        float stolenCash = Mathf.Round(currentCash * 0.25f);
+        PawnGameManager.Instance.playerCash -= stolenCash;
+
+        // 2. Envanter kaybı: Eşyaların 1/3'ü çalınır
+        List<InventoryItem> allItems = InventorySystem.Instance.GetAllItems();
+        int itemsToStealCount = Mathf.CeilToInt(allItems.Count / 3f); // Toplamın 1/3'ü
+        int stolenCount = 0;
+
+        // Rastgele eşyaları seçip sil
+        for (int i = 0; i < itemsToStealCount; i++)
+        {
+            if (allItems.Count == 0) break;
+            int randomIndex = UnityEngine.Random.Range(0, allItems.Count);
+            InventoryItem stolenItem = allItems[randomIndex];
+            
+            InventorySystem.Instance.RemoveItem(stolenItem.uniqueID);
+            allItems.RemoveAt(randomIndex);
+            stolenCount++;
+        }
+
+        outcome.description = "Gece dükkanın arka camını kırıp kasayı ve vitrinin bir kısmını patlatmışlar! Güvenlik kamerası kayıtları yetersiz.";
+        outcome.effectSummary = $"Kayıp: ${stolenCash:N0} nakit (kasanın 1/4'ü) ve depodaki {stolenCount} adet değerli eşya (envanterin 1/3'ü) çalındı!";
+    }
+
+    // -------------------------------------------------------------
+    // 2. ÜNLÜ BİRİ GELDİ (CELEBRITY VISIT)
+    // -------------------------------------------------------------
+    private void ExecuteCelebrityVisit(ref RandomEventOutcome outcome)
+    {
+        outcome.title = "KAPIDA BİR ÜNLÜ VAR!";
+        outcome.description = "New York'ta çekim yapan tanınmış bir film yıldızı ve korumaları dükkana adım attı. Gazeteciler kapıda!";
+        outcome.effectSummary = "Gelen ilk alıcı müşterinin bütçesi x3 katına çıktı! Dükkan itibarı +10 arttı.";
+
+        PawnGameManager.Instance.shopReputation += 10;
+        // Bir sonraki alıcı müşterinin bütçesi kod üzerinden 3 katına katlanabilir
+    }
+
+    // -------------------------------------------------------------
+    // 3. POLİS BASKINI / DENETİM (POLICE INSPECTION)
+    // -------------------------------------------------------------
+    private void ExecutePoliceRaid(ref RandomEventOutcome outcome)
+    {
+        outcome.title = "POLİS VE MALİYE BASKINI!";
+        
+        // Envanterdeki çalıntı eşyaları tara
+        List<InventoryItem> stolenItems = InventorySystem.Instance.GetIllicitItems();
+
+        if (stolenItems.Count > 0)
+        {
+            float totalFine = stolenItems.Count * 1200f; // Eşya başına $1,200 ceza
+            PawnGameManager.Instance.playerCash = Mathf.Max(0f, PawnGameManager.Instance.playerCash - totalFine);
+            PawnGameManager.Instance.shopReputation -= 20;
+
+            foreach (var item in stolenItems)
+            {
+                InventorySystem.Instance.RemoveItem(item.uniqueID);
+            }
+
+            outcome.description = "Dedektifler arama emriyle içeri girdi ve çalıntı eşyaları tespit etti!";
+            outcome.effectSummary = $"{stolenItems.Count} adet çalıntı eşyaya el konuldu! ${totalFine:N0} para cezası kesildi ve itibar yerle bir oldu (-20).";
+        }
+        else
+        {
+            PawnGameManager.Instance.shopReputation += 5;
+            outcome.description = "Ekipler dükkandaki tüm seri numaralarını sorguladı. Hiçbir çalıntı mal bulunamadı.";
+            outcome.effectSummary = "Dükkan denetimden tertemiz çıktı! Bölgedeki güvenilirlik ve itibarınız arttı (+5).";
+        }
+    }
+
+    // -------------------------------------------------------------
+    // 4. ANİ PİYASA ÇÖKÜŞÜ (MARKET CRASH)
+    // -------------------------------------------------------------
+    private void ExecuteMarketCrash(ref RandomEventOutcome outcome)
+    {
+        outcome.title = "BORSADA KARA GÜN: PİYASA ÇÖKTÜ!";
+        outcome.description = "Finans piyasalarında patlak veren kriz nedeniyle lüks tüketime olan ilgi bıçak gibi kesildi.";
+        outcome.effectSummary = "Bugün tüm eşyaların satış değeri %30 düştü. Mal satmak için berbat bir gün!";
+    }
+
+    // -------------------------------------------------------------
+    // 5. NADİR / MÜZELİK EŞYA GELDİ (RARE ITEM OFFERED)
+    // -------------------------------------------------------------
+    private void ExecuteRareItemArrival(ref RandomEventOutcome outcome)
+    {
+        outcome.title = "GİZEMLİ BİR KOLEKSİYONER GELDİ!";
+        outcome.description = "Kapıdan giren yaşlı bir beyefendi çantasından müzayedelik, efsanevi (Legendary) bir parça çıkardı.";
+        outcome.effectSummary = "Sıradaki satıcı müşteri tezgaha çok nadir ve yüksek kâr marjlı bir parça koyacak!";
+    }
+
+    // -------------------------------------------------------------
+    // 6. SAHTE EŞYA FURYASI (COUNTERFEIT WAVE)
+    // -------------------------------------------------------------
+    private void ExecuteCounterfeitWave(ref RandomEventOutcome outcome)
+    {
+        outcome.title = "DİKKAT: SAHTE EŞYA ŞEBEKESİ AKTİF!";
+        outcome.description = "Liman bölgesinden şehre tonlarca birebir replika saat ve taklit antika sokulduğu bildirildi.";
+        outcome.effectSummary = "Bugün gelecek satıcıların sahte ürün getirme ihtimali %80'e çıktı! Eksper tutmadan mal almayın!";
+    }
+
+    // -------------------------------------------------------------
+    // 7. RAKİP DÜKKAN AÇILDI (RIVAL SHOP OPENED)
+    // -------------------------------------------------------------
+    private void ExecuteRivalShop(ref RandomEventOutcome outcome)
+    {
+        outcome.title = "CADDEYE YENİ BİR REHİN DÜKKANI AÇILDI!";
+        outcome.description = "Karşı köşede agresif indirimler sunan zincir bir rehin mağazası faaliyete geçti.";
+        outcome.effectSummary = "Müşteriler daha tok ve inatçı davranıyor. Bugünlük pazarlık dirençleri arttı!";
+    }
+}
+
