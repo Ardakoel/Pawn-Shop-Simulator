@@ -1,0 +1,367 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+
+public enum ItemDisposition
+{
+    Sell,     // Vitrinde normal satış
+    Auction,  // Açık artırmaya çıkarma
+    Keep,     // Koleksiyona / Kasaya kaldırma (Sakla)
+    Appraise, // Satmadan önce detaylı eksper çağırma
+    Discard   // Çöpe atma / İmha etme (Sahte/değersiz mallar için)
+}
+
+public enum SaleOutcome
+{
+    InstantSale,    // Fiyat çok ucuzdu, anında kapıldı
+    FairSale,       // Makul kârla normal sürede satıldı
+    OverpricedCancel// Aşırı pahalı konulduğu için alıcı bulamadı, satış iptal oldu
+}
+
+public class SellingSystem : MonoBehaviour
+{
+    public static SellingSystem Instance { get; private set; }
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+    }
+
+    /// <summary>
+    /// Eşya üzerinde oyuncunun seçtiği temel eylemi yürütür.
+    /// </summary>
+    public void HandleItemDisposition(InventoryItem item, ItemDisposition disposition, float listingPrice = 0f)
+    {
+        switch (disposition)
+        {
+            case ItemDisposition.Sell:
+                AttemptVitrineSale(item, listingPrice);
+                break;
+
+            case ItemDisposition.Auction:
+                StartAuction(item);
+                break;
+
+            case ItemDisposition.Keep:
+                KeepInVault(item);
+                break;
+
+            case ItemDisposition.Appraise:
+                RequestInDepthAppraisal(item);
+                break;
+
+            case ItemDisposition.Discard:
+                DiscardItem(item);
+                break;
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // 1. VİTRİNDE SATIŞ (SELL) - DİNAMİK FİYAT VE İPTAL / ANINDA SATIŞ MANTIĞI
+    // -----------------------------------------------------------------
+    /// <summary>
+    /// Oyuncunun belirlediği fiyata göre satış sonucunu belirler.
+    /// </summary>
+    public SaleOutcome AttemptVitrineSale(InventoryItem item, float listingPrice)
+    {
+        float marketValue = item.actualValue;
+        float priceRatio = listingPrice / marketValue;
+
+        Debug.Log($"<color=cyan>[VİTRİN SATIŞI]:</color> {item.itemName} | Gerçek Değer: ${marketValue:N0} | İstenen Fiyat: ${listingPrice:N0}");
+
+        // DURUM A: Aşırı Pahalı (Piyasa değerinin %140'ından fazlaysa) -> İPTAL
+        if (priceRatio > 1.40f)
+        {
+            Debug.Log("<color=red>[SATIŞ İPTAL OLDU]:</color> Bu fiyata kimse dönüp bakmadı bile! Müşteriler fiyatı fahiş bulup vitrini terk etti.");
+            return SaleOutcome.OverpricedCancel;
+        }
+        // DURUM B: Ucuz / Fırsat Ürünü (Piyasa değerinin %85'i ve altındaysa) -> HEMEN SATIŞ
+        else if (priceRatio <= 0.85f)
+        {
+            float profit = listingPrice - item.purchasePrice;
+            PawnGameManager.Instance.playerCash += listingPrice;
+            InventorySystem.Instance.RemoveItem(item.uniqueID);
+
+            Debug.Log($"<color=green>[ANINDA SATILDI!]:</color> Fiyat çok cazip olduğu için ilk giren müşteri kapıp gitti! Kasaya giren: ${listingPrice:N0} (Net Kâr: ${profit:N0})");
+            return SaleOutcome.InstantSale;
+        }
+        // DURUM C: Normal / Adil Satış (Piyasa değerinin %86 - %140 arası)
+        else
+        {
+            // Müşterinin pazarlıkla alıp almayacağını belirleme (%70 ihtimalle normal satış)
+            if (UnityEngine.Random.value < 0.75f)
+            {
+                float profit = listingPrice - item.purchasePrice;
+                PawnGameManager.Instance.playerCash += listingPrice;
+                InventorySystem.Instance.RemoveItem(item.uniqueID);
+
+                Debug.Log($"<color=yellow>[BAŞARILI SATIŞ]:</color> Normal sürede alıcı bulundu ve satıldı. Kasaya giren: ${listingPrice:N0} (Kâr: ${profit:N0})");
+                return SaleOutcome.FairSale;
+            }
+            else
+            {
+                Debug.Log("<color=orange>[ALICI ÇIKMADI]:</color> Bugün bu fiyata alıcı bulunamadı. Fiyatı biraz kırıp tekrar deneyebilirsiniz.");
+                return SaleOutcome.OverpricedCancel;
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // 2. AÇIK ARTIRMA (AUCTION)
+    // -----------------------------------------------------------------
+    /// <summary>
+    /// Eşyayı açık artırmaya çıkarır. Nadir veya antika eşyalar piyasa değerinin çok üstüne fırlayabilir.
+    /// </summary>
+    public void StartAuction(InventoryItem item)
+    {
+        Debug.Log($"<color=magenta>[AÇIK ARTIRMA BAŞLADI]:</color> {item.itemName} müzayedeye sunuluyor...");
+
+        // Sahte ürün açık artırmada fark edilirse ceza yer
+        if (item.authenticity == AuthenticityType.Fake || item.authenticity == AuthenticityType.Counterfeit)
+        {
+            Debug.Log("<color=red>[SKANDAL]:</color> Müzayede komisyonu ürünün SAHTE olduğunu fark etti! Eşyaya el konuldu ve para cezası kesildi.");
+            PawnGameManager.Instance.playerCash -= 500f; // Ceza
+            InventorySystem.Instance.RemoveItem(item.uniqueID);
+            return;
+        }
+
+        // Açık artırma çarpanı (0.8 ile 2.2 arası zarlanır)
+        // Nadirlik arttıkça tavan uçar
+        float bidMultiplier = UnityEngine.Random.Range(0.85f, 1.6f);
+        if (item.category == ItemCategory.Antique || item.category == ItemCategory.Painting)
+        {
+            bidMultiplier += UnityEngine.Random.Range(0.2f, 0.6f); // Sanat ve antika açık artırmada prim yapar
+        }
+
+        float finalAuctionPrice = Mathf.Round(item.actualValue * bidMultiplier);
+        float commission = finalAuctionPrice * 0.10f; // %10 Müzayede evi komisyonu
+        float netEarnings = finalAuctionPrice - commission;
+
+        PawnGameManager.Instance.playerCash += netEarnings;
+        InventorySystem.Instance.RemoveItem(item.uniqueID);
+
+        Debug.Log($"<color=green>[ÇEKİÇ VURULDU!]:</color> Eşya ${finalAuctionPrice:N0} fiyatına satıldı! (Komisyon sonrası net kazanç: ${netEarnings:N0})");
+    }
+
+    // -----------------------------------------------------------------
+    // 3. SAKLA / KASAYA KALDIR (KEEP)
+    // -----------------------------------------------------------------
+    public void KeepInVault(InventoryItem item)
+    {
+        Debug.Log($"<color=blue>[KASAYA KALDIRILDI]:</color> {item.itemName} özel kasaya kilitlendi. Vitrinde sergilenmeyecek.");
+    }
+
+    // -----------------------------------------------------------------
+    // 4. SATMADAN ÖNCE EKSPERTİZ YAP (APPRAISE)
+    // -----------------------------------------------------------------
+    public void RequestInDepthAppraisal(InventoryItem item)
+    {
+        Debug.Log($"<color=yellow>[EKSPERTİZE GÖNDERİLDİ]:</color> {item.itemName} için detaylı inceleme talep edildi.");
+        // AppraiserSystem üzerinden usta çağrılabilir
+    }
+
+    // -----------------------------------------------------------------
+    // 5. ÇÖPE AT / İMHA ET (DISCARD)
+    // -----------------------------------------------------------------
+    public void DiscardItem(InventoryItem item)
+    {
+        InventorySystem.Instance.RemoveItem(item.uniqueID);
+        Debug.Log($"<color=grey>[ÇÖPE ATILDI]:</color> {item.itemName} envanterden silindi ve imha edildi.");
+    }
+}
+
+
+
+
+using UnityEngine;
+
+public enum BuyerNegotiationOutcome
+{
+    DealClosed,            // Eşya müşteriye satıldı, para kasaya girdi
+    CustomerCounterOffer,  // Müşteri fiyatı çok buldu, kendi teklifini verdi
+    RejectedNoAppraisal,   // Ekspertiz belgesi olmadığı için almayı reddetti
+    WalkedAwayTooExpensive // Oyuncu fahiş fiyat istedi veya müşterinin sabrı bitti
+}
+
+public struct BuyerTurnResult
+{
+    public BuyerNegotiationOutcome outcome;
+    public float currentCustomerBid;
+    public string dialogueLine;
+}
+
+public class BuyerSessionSystem : MonoBehaviour
+{
+    public static BuyerSessionSystem Instance { get; private set; }
+
+    [Header("Mevcut Alıcı Oturumu")]
+    public CustomerData currentBuyer;
+    public InventoryItem targetItem;
+
+    private float customerMaxBudget; // Müşterinin cebindeki tavan bütçe (Örn: $1,200)
+    private float currentCustomerBid; // Müşterinin o an teklif ettiği para (Örn: $800)
+    private int buyerStrikesLeft;
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+    }
+
+    /// <summary>
+    /// Vitrindeki bir eşyaya talip olan yeni bir alıcı müşteri seansı başlatır.
+    /// </summary>
+    public BuyerTurnResult StartBuyerSession(CustomerData buyer, InventoryItem item)
+    {
+        currentBuyer = buyer;
+        targetItem = item;
+
+        BuyerTurnResult initialResult = new BuyerTurnResult();
+
+        // 1. KONTROL: Ekspertiz Belgesi Zorunluluğu (Saat & Resim / Tablo / Mücevher)
+        if (RequiresExpertAppraisal(item.category) && !item.isIdentified)
+        {
+            // Müşterinin bilgi seviyesi veya şüpheciliği yüksekse raporsuz almaz
+            if (buyer.traits.itemKnowledge > 40 || buyer.traits.trustworthiness > 30)
+            {
+                initialResult.outcome = BuyerNegotiationOutcome.RejectedNoAppraisal;
+                initialResult.currentCustomerBid = 0f;
+                initialResult.dialogueLine = GetNoAppraisalDialogue(item.category, buyer.traits);
+                Debug.Log($"<color=red>[EKSPER ŞARTI]:</color> {buyer.fullName}: \"{initialResult.dialogueLine}\"");
+                return initialResult;
+            }
+        }
+
+        // 2. Müşterinin Tavan Bütçesini Hesapla (Gerçek değer + Kişilik etkeni)
+        // Zengin (NeedMoney düşük), eşyaya hevesli veya açgözlü alıcı piyasanın üstüne çıkabilir
+        float budgetMultiplier = 1.0f;
+        if (buyer.traits.needMoney < 30) budgetMultiplier += 0.20f;       // Rahat parası var
+        if (buyer.traits.itemAttachment > 65) budgetMultiplier += 0.25f;  // Koleksiyon hevesi yüksek
+        if (buyer.traits.hagglingSkill > 70) budgetMultiplier -= 0.15f;   // Sıkı esnaf, az para ayırır
+
+        customerMaxBudget = Mathf.Round(item.actualValue * Mathf.Clamp(budgetMultiplier, 0.70f, 1.40f));
+
+        // 3. Müşterinin Açılış Teklifi (Düşükten başlar: Bütçesinin %60 - %75'i)
+        float initialBidRatio = 0.65f - (buyer.traits.hagglingSkill * 0.0015f);
+        currentCustomerBid = Mathf.Round(customerMaxBudget * Mathf.Clamp(initialBidRatio, 0.50f, 0.80f));
+
+        // Sabır puanı (2 ile 5 teklif hakkı)
+        buyerStrikesLeft = Mathf.Clamp(buyer.traits.patience / 25 + 2, 2, 5);
+
+        initialResult.outcome = BuyerNegotiationOutcome.CustomerCounterOffer;
+        initialResult.currentCustomerBid = currentCustomerBid;
+        initialResult.dialogueLine = $"Vitrindeki şu {item.itemName} dikkatimi çekti. Sertifikası da tamsa, benim teklifim ${currentCustomerBid:N0}. Ne dersiniz?";
+
+        Debug.Log($"<color=cyan>[ALICI GELDİ]:</color> {buyer.fullName} | Hedef Eşya: {item.itemName} | İlk Teklif: ${currentCustomerBid:N0} (Maksimum Çıkabileceği: ${customerMaxBudget:N0})");
+        return initialResult;
+    }
+
+    /// <summary>
+    /// Oyuncu (Satıcı olarak) bir satış fiyatı istediğinde çalışır.
+    /// </summary>
+    /// <param name="playerDemandedPrice">Oyuncunun müşteriden istediği para</param>
+    public BuyerTurnResult ProcessPlayerAskingPrice(float playerDemandedPrice)
+    {
+        BuyerTurnResult result = new BuyerTurnResult();
+
+        // 1. DURUM: Oyuncunun istediği fiyat müşterinin o anki teklifine eşit veya altındaysa -> SATILDI!
+        if (playerDemandedPrice <= currentCustomerBid)
+        {
+            result.outcome = BuyerNegotiationOutcome.DealClosed;
+            result.currentCustomerBid = playerDemandedPrice;
+            result.dialogueLine = "Harika bir fiyat! Anlaştık, hemen ödemeyi yapıyorum.";
+
+            FinalizeSale(playerDemandedPrice);
+            return result;
+        }
+
+        // 2. DURUM: Oyuncu müşterinin maksimum bütçesinin de üstünde bir fahiş fiyat istedi mi?
+        if (playerDemandedPrice > customerMaxBudget * 1.35f && currentBuyer.traits.pride > 60)
+        {
+            result.outcome = BuyerNegotiationOutcome.WalkedAwayTooExpensive;
+            result.currentCustomerBid = 0f;
+            result.dialogueLine = "Bu fiyata sıfırını alırım! Resmen soygun bu, iyi günler!";
+            Debug.Log($"<color=red>[MASA DAĞILDI]:</color> {currentBuyer.fullName} dükkanı terk etti.");
+            return result;
+        }
+
+        // 3. DURUM: Oyuncu müşterinin tavan bütçesine yakın/makul bir fiyat istedi mi?
+        if (playerDemandedPrice <= customerMaxBudget)
+        {
+            // Müşteri son turdaysa veya acelesi/hevesi varsa kabul edebilir
+            if (buyerStrikesLeft <= 1 || currentBuyer.traits.urgency > 65 || currentBuyer.traits.itemAttachment > 75)
+            {
+                result.outcome = BuyerNegotiationOutcome.DealClosed;
+                result.currentCustomerBid = playerDemandedPrice;
+                result.dialogueLine = $"Bütçemi biraz aştı ama bu parçayı gerçekten istiyordum. ${playerDemandedPrice:N0}'a el sıkışalım.";
+
+                FinalizeSale(playerDemandedPrice);
+                return result;
+            }
+        }
+
+        // 4. DURUM: Sabır Tüketimi
+        buyerStrikesLeft--;
+        if (buyerStrikesLeft <= 0)
+        {
+            result.outcome = BuyerNegotiationOutcome.WalkedAwayTooExpensive;
+            result.currentCustomerBid = 0f;
+            result.dialogueLine = "Daha fazla artıramam. Anlaşamıyoruz, başka dükkanlara bakacağım.";
+            Debug.Log($"<color=orange>[ALICI ÇIKTI]:</color> {currentBuyer.fullName} sabrı tükendiği için almaktan vazgeçti.");
+            return result;
+        }
+
+        // 5. DURUM: Müşteri Kendi Teklifini Biraz Yükseltir (Karşı Adım)
+        float stepIncrease = (customerMaxBudget - currentCustomerBid) * 0.35f;
+        currentCustomerBid = Mathf.Min(customerMaxBudget, Mathf.Round(currentCustomerBid + stepIncrease));
+
+        result.outcome = BuyerNegotiationOutcome.CustomerCounterOffer;
+        result.currentCustomerBid = currentCustomerBid;
+        result.dialogueLine = $"İstediğiniz rakam çok fazla. Sizin için teklifimi ${currentCustomerBid:N0} seviyesine çekebilirim. Daha fazlası zor.";
+
+        Debug.Log($"<color=yellow>[ALICI ARTIRDI]:</color> Yeni Müşteri Teklifi: ${currentCustomerBid:N0} (Kalan Sabır: {buyerStrikesLeft})");
+        return result;
+    }
+
+    /// <summary>
+    /// Hangi kategoriler kesinlikle ekspertiz sertifikası zorunluluğu taşır?
+    /// </summary>
+    private bool RequiresExpertAppraisal(ItemCategory category)
+    {
+        return category == ItemCategory.Watch || 
+               category == ItemCategory.Painting || 
+               category == ItemCategory.Jewelry || 
+               category == ItemCategory.Antique;
+    }
+
+    private string GetNoAppraisalDialogue(ItemCategory category, CustomerTraits traits)
+    {
+        switch (category)
+        {
+            case ItemCategory.Watch:
+                return "Rolex/Lüks saat alıyoruz ama arka kapağını açıp baktırmamışsınız bile! Mekanizmasının orijinal olduğunu nereden bileyim? Ekspertiz raporu olmadan 1 kuruş vermem.";
+
+            case ItemCategory.Painting:
+                return "Bu tablonun fırça darbelerini ve imzasını bir sanat tarihçisi onaylamamış. Sokak ressamı kopyası mı orijinal mi belirsizken bunu alamam.";
+
+            case ItemCategory.Jewelry:
+                return "Taşları zirkon mu pırlanta mı, altın kaç ayar? Raporu yoksa sokak kuyumcusundan farksızsınız, risk alamam.";
+
+            default:
+                return "Bu kadar değerli bir parça için elinizde ekspertiz veya orijinallik belgesi yok. Güvenemem.";
+        }
+    }
+
+    private void FinalizeSale(float finalPrice)
+    {
+        float profit = finalPrice - targetItem.purchasePrice;
+        PawnGameManager.Instance.playerCash += finalPrice;
+        InventorySystem.Instance.RemoveItem(targetItem.uniqueID);
+
+        Debug.Log($"<color=green>[SATIŞ TAMAMLANDI!]:</color> {targetItem.itemName} ${finalPrice:N0} fiyata satıldı! (Net Kâr: ${profit:N0})");
+    }
+}
+
+
