@@ -237,3 +237,222 @@ public class ShopTest : MonoBehaviour
     }
 }
 
+
+using UnityEngine;
+
+[System.Serializable]
+public class CustomerObservation
+{
+    // Oyuncunun fark edebileceği fiziksel detaylar
+    public string visualTell;        // Örn: "Gözleri sürekli duvardaki saatte, bacağını ritmik şekilde sallıyor."
+    public string voiceTone;         // Örn: "Aceleci, kelimeleri yutarak konuşuyor."
+    public string clothingDetail;    // Örn: "Üzerinde kaliteli ama yıpranmış bir ceket var, ayakkabıları tozlu."
+
+    // Oyuncunun soru sordukça açtığı sezgisel çıkarımlar
+    public bool isUrgencySuspected = false;
+    public bool isDishonestySuspected = false;
+    public bool isDebtSuspected = false;
+    public bool isGreedSuspected = false;
+}
+
+using System.Collections.Generic;
+using UnityEngine;
+
+public enum ProbeQuestionType
+{
+    AskReasonForSelling, // "Neden satıyorsun?" -> Debt & Urgency ipucu
+    AskProvenance,       // "Nereden aldın, belgesi var mı?" -> Honesty & Attachment ipucu
+    ComplimentItem,      // "Çok güzel parçaymış, kıymetli olmalı." -> Greed & Pride ipucu
+    FakeHesitation       // "Emin olamadım, pek gidecek bir şeye benzemiyor..." -> Desperation ipucu
+}
+
+public class HiddenTraitObservationSystem : MonoBehaviour
+{
+    public static HiddenTraitObservationSystem Instance { get; private set; }
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+    }
+
+    /// <summary>
+    /// Müşterinin gizli trait'lerine göre dışarıdan fark edilecek ipuçlarını üretir.
+    /// </summary>
+    public CustomerObservation GenerateObservations(CustomerTraits traits)
+    {
+        CustomerObservation obs = new CustomerObservation();
+
+        // 1. ACİLİYET & BORÇ İPUÇLARI (Urgency & Debt)
+        if (traits.urgency > 75 || traits.debt > 75)
+        {
+            obs.visualTell = PickRandom(new string[]
+            {
+                "Gözleri sürekli kapıda ve duvardaki saatte; parmaklarıyla tezgâha ritmik şekilde vuruyor.",
+                "Alnında hafif ter damlaları birikmiş, telefonunu sürekli cebinden çıkarıp ekrana bakıyor.",
+                "Huzursuz bir şekilde ağırlığını bir ayağından diğerine veriyor, yerinde duramıyor."
+            });
+            obs.voiceTone = "Kelimeleri hızlı hızlı tüketiyor, nefesi hafif daralmış gibi.";
+        }
+        // 2. KİBİR & TOK SATICI (Pride & Low NeedMoney)
+        else if (traits.pride > 75 && traits.needMoney < 40)
+        {
+            obs.visualTell = PickRandom(new string[]
+            {
+                "Kolları göğsünde kavuşmuş, dik ve mesafeli bir duruş sergiliyor.",
+                "Eşyayı tezgâha bırakırken son derece yavaş ve kayıtsız davranıyor.",
+                "Gözlerinizin içine doğrudan ve meydan okurcasına bakıyor."
+            });
+            obs.voiceTone = "Kendinden emin, sakin ve hafif üstten bakan bir ton.";
+        }
+        // 3. SAHTEKARLIK & TEDİRGİNLİK (Low Honesty & High Greed)
+        else if (traits.honesty < 35)
+        {
+            obs.visualTell = PickRandom(new string[]
+            {
+                "Doğrudan göz teması kurmaktan kaçınıyor; tezgâhtaki diğer eşyaları inceler gibi yapıyor.",
+                "Boğazını sık sık temizliyor, büyüteci elinize aldığınızda omuzları hafifçe geriliyor.",
+                "Ellerini cebine sokup çıkarıyor, konuşurken dudaklarını ısırıyor."
+            });
+            obs.voiceTone = "Aşırı samimi ve hızlı bir dille aradaki mesafeyi kapatmaya çalışıyor.";
+        }
+        // 4. DUYGUSAL BAĞ (High ItemAttachment)
+        else if (traits.itemAttachment > 75)
+        {
+            obs.visualTell = PickRandom(new string[]
+            {
+                "Eşyayı tezgâha koyduktan sonra bile parmak uçlarıyla üzerinden ayırmakta zorlanıyor.",
+                "Gözlerinde hüzünlü ve tereddütlü bir bakış var, eşyaya bir nesneden çok hatıra gibi bakıyor."
+            });
+            obs.voiceTone = "Ses tonu yumuşak ve buruk; konuşurken duraksıyor.";
+        }
+        else
+        {
+            obs.visualTell = "Rahat ve standart bir duruş sergiliyor. Göze çarpan belirgin bir gariplik yok.";
+            obs.voiceTone = "Doğal ve dengeli bir konuşma tonu.";
+        }
+
+        // Kılık kıyafet ipucu (Zenginlik ve Borç yansıması)
+        if (traits.debt > 70)
+        {
+            obs.clothingDetail = "Üzerindeki kıyafetler kaliteli markalardan seçilmiş ancak bakımsız ve düğmeleri eksik.";
+        }
+        else if (traits.needMoney < 30)
+        {
+            obs.clothingDetail = "Giyimi son derece muntazam, ütülü ve temiz bir görünümü var.";
+        }
+        else
+        {
+            obs.clothingDetail = "Günlük, sade ve gösterişsiz kıyafetler tercih etmiş.";
+        }
+
+        return obs;
+    }
+
+    /// <summary>
+    /// Oyuncu müşteriye çapraz soru sorduğunda gizli özelliğe dair ipucu veren cevabı döner.
+    /// </summary>
+    public string AskProbeQuestion(
+        ProbeQuestionType question, 
+        CustomerTraits traits, 
+        CustomerObservation observation, 
+        ref int customerPatience)
+    {
+        // Soru sormak müşterinin sabrını biraz tüketir (Sorgulanmaktan hoşlanmazlar)
+        customerPatience -= 5;
+
+        switch (question)
+        {
+            // "Bu eşyayı neden satmak istiyorsun?"
+            case ProbeQuestionType.AskReasonForSelling:
+                if (traits.urgency > 70 && traits.debt > 70)
+                {
+                    observation.isUrgencySuspected = true;
+                    observation.isDebtSuspected = true;
+                    return "(Gözlerini kaçırarak): 'Şey... Birkaç gün içinde kapatmam gereken acil bir ödeme çıktı diyelim. Uzatmanın alemi yok.'";
+                }
+                if (traits.pride > 75)
+                {
+                    return "(Terslenerek): 'Bu sizi neden ilgilendiriyor? Nakite çevirmek istedim o kadar. Ticaret yapıyoruz burada.'";
+                }
+                if (traits.itemAttachment > 75)
+                {
+                    return "(İç çekerek): 'İnanın mecbur kalmasam adımımı atmazdım. Hayat şartları bazen insanı istemediği şeylere zorluyor.'";
+                }
+                return "'Evde fazlalıktı, duracağına paraya dönsün istedim.'";
+
+            // "Nereden aldın, bir faturası veya sertifikası var mı?"
+            case ProbeQuestionType.AskProvenance:
+                if (traits.honesty < 30)
+                {
+                    observation.isDishonestySuspected = true;
+                    return "(Hafif panikle): 'Yahu taşınırken kayboldu diyorum! Hem faturayla mı alıp satacaksın? Mal ortada işte, neyine güvenmiyorsun?'";
+                }
+                if (traits.itemKnowledge > 70)
+                {
+                    return "'Orijinal seri numarası kasanın altında damgalıdır. Zamanında yetkili distribütörden alınmıştı, kontrol edebilirsiniz.'";
+                }
+                return "'Yıllar önce hediye gelmişti, faturasını saklamadım maalesef.'";
+
+            // "Çok özel bir parça, kolay elden çıkarılacak bir şeye benzemiyor..."
+            case ProbeQuestionType.ComplimentItem:
+                if (traits.greed > 70)
+                {
+                    observation.isGreedSuspected = true;
+                    return "(Gözleri parlayarak): 'Tabii ki öyle! Piyasasını araştırdım, bunun değerini bilen birisi bana hakkını verir.'";
+                }
+                if (traits.itemAttachment > 75)
+                {
+                    return "'Evet... Maneviyatını parayla ölçemem. Lütfen değerini bilecek bir vitrine koyun.'";
+                }
+                return "'Farkındayım, bu yüzden buraya getirdim.'";
+
+            // "Emin olamadım, dükkanda çok uzun süre bekleyebilir bu..."
+            case ProbeQuestionType.FakeHesitation:
+                if (traits.desperation > 70)
+                {
+                    observation.isUrgencySuspected = true;
+                    return "(Yalvarır tonda): 'Yapmayın usta, biraz kâr payı bırakırım sana. Gerçekten bu parayı bugün almam lazım.'";
+                }
+                if (traits.pride > 70)
+                {
+                    return "(Eşyayı geri çekmeye yeltenerek): 'Satmak zorunda değilim. İlginizi çekmediyse başka kapıya giderim, sorun yok.'";
+                }
+                return "'Siz bilirsiniz, benim fiyatım makul.'";
+
+            default:
+                return "'... Anlamadım?'";
+        }
+    }
+
+    private string PickRandom(string[] list)
+    {
+        return list[Random.Range(0, list.Length)];
+    }
+}
+
+public class PlayerDeductionManager : MonoBehaviour
+{
+    /// <summary>
+    /// Oyuncu müşteriyi doğru analiz ettiğinde pazarlıkta ekstra indirim kozu açılır.
+    /// </summary>
+    public bool ValidatePlayerDeduction(CustomerTraits traits, bool guessedUrgent, bool guessedDishonest)
+    {
+        bool correctInsight = false;
+
+        if (guessedUrgent && traits.urgency > 70)
+        {
+            Debug.Log("<color=green>[SEZGİ DOĞRU]:</color> Müşterinin acelesi olduğunu doğru tahmin ettiniz! 'Peşin para' teklifinizde ek %15 indirim yapacak.");
+            correctInsight = true;
+        }
+
+        if (guessedDishonest && traits.honesty < 35)
+        {
+            Debug.Log("<color=green>[SEZGİ DOĞRU]:</color> Müşterinin yalan söylediğini fark ettiniz! Ekspertiz testini masaya koyduğunuzda direnemeyecek.");
+            correctInsight = true;
+        }
+
+        return correctInsight;
+    }
+}
+
