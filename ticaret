@@ -1,0 +1,235 @@
+using UnityEngine;
+
+public enum NegotiationState
+{
+    Ongoing,            // Pazarlık devam ediyor, yeni teklif bekleniyor
+    DealAccepted,       // Anlaşma sağlandı (Satış gerçekleşti)
+    CustomerWalkedAway, // Sabır bitti veya gururu kırıldı, müşteri gitti
+    FinalOfferMade      // Müşteri son fiyatını sundu (Rest çekti)
+}
+
+public struct NegotiationTurnResult
+{
+    public NegotiationState state;
+    public float customerOffer;
+    public int currentRound;
+    public int patienceRemaining;
+    public string customerDialogue;
+}
+
+public class NegotiationSystem
+{
+    // Temel Fiyat Sınırları
+    public float CustomerStartingPrice { get; private set; } // Açılış fiyatı (Örn: $1,000)
+    public float CustomerMinimumPrice { get; private set; }  // İneceği en dip sınır (Örn: $750)
+    public float CurrentCustomerOffer { get; private set; }  // Müşterinin masadaki son teklifi
+    public float LastPlayerOffer { get; private set; }       // Oyuncunun verdiği son teklif
+
+    // Tur & Sabır
+    public int CurrentRound { get; private set; }
+    public int CurrentPatience { get; private set; }
+    private bool hasMadeFinalStand = false; // "Son fiyatım" dedi mi?
+
+    private CustomerTraits traits;
+
+    /// <summary>
+    /// Yeni bir pazarlık oturumu başlatır.
+    /// </summary>
+    public void StartNegotiation(float trueMarketValue, CustomerTraits customerTraits)
+    {
+        traits = customerTraits;
+        CurrentRound = 0;
+        hasMadeFinalStand = false;
+        LastPlayerOffer = 0f;
+
+        // 1. Minimum Fiyat Hesabı (Aciliyet ve borç dibe çeker, gurur ve bağlılık korur)
+        CustomerMinimumPrice = ItemValuationSystem.CalculateCustomerFloorPrice(trueMarketValue, traits);
+
+        // 2. Açılış Fiyatı (Greed ve Pride oranında yüksek başlar: Piyasanın %115 - %150'si)
+        float greedMarkup = 1.15f + (traits.greed * 0.0025f) + (traits.pride * 0.0015f);
+        CustomerStartingPrice = Mathf.Round(Mathf.Max(CustomerMinimumPrice * 1.25f, trueMarketValue * greedMarkup));
+        CurrentCustomerOffer = CustomerStartingPrice;
+
+        // 3. Sabır Puanı (Patience: 0-100 değerine göre 3 ile 6 tur arası dayanıklılık)
+        CurrentPatience = Mathf.Clamp(traits.patience / 20 + 2, 2, 6);
+    }
+
+    /// <summary>
+    /// Oyuncu yeni bir teklif sunduğunda turu işletir.
+    /// </summary>
+    public NegotiationTurnResult SubmitPlayerOffer(float playerOffer)
+    {
+        CurrentRound++;
+        NegotiationTurnResult result = new NegotiationTurnResult();
+        result.currentRound = CurrentRound;
+
+        // -------------------------------------------------------------
+        // KONTROL 1: Oyuncunun Teklifi Müşterinin İstediklerinden Yüksek mi?
+        // -------------------------------------------------------------
+        if (playerOffer >= CurrentCustomerOffer)
+        {
+            result.state = NegotiationState.DealAccepted;
+            result.customerOffer = playerOffer;
+            result.patienceRemaining = CurrentPatience;
+            result.customerDialogue = "Harika! Bu teklifi kabul ediyorum, el sıkışalım.";
+            return result;
+        }
+
+        // -------------------------------------------------------------
+        // KONTROL 2: Oyuncunun Teklifi Müşterinin Minimum Tabanını Geçti mi?
+        // -------------------------------------------------------------
+        // Müşteri açılışta yüksek istese de, oyuncunun teklifi müşterinin gizli tabanına eşit/üstündeyse anlaşılabilir
+        if (playerOffer >= CustomerMinimumPrice)
+        {
+            // Eğer teklif tabana çok yakınsa ve müşteri açgözlüyse biraz daha koparmak isteyebilir
+            float gapToFloor = playerOffer - CustomerMinimumPrice;
+            if (gapToFloor >= (CustomerMinimumPrice * 0.05f) || traits.urgency > 60 || CurrentPatience <= 1)
+            {
+                result.state = NegotiationState.DealAccepted;
+                result.customerOffer = playerOffer;
+                result.patienceRemaining = CurrentPatience;
+                result.customerDialogue = "Pekala... İstediğimden az ama bu fiyata anlaşabiliriz.";
+                return result;
+            }
+        }
+
+        // -------------------------------------------------------------
+        // KONTROL 3: Hakaret Düzeyinde Düşük Teklif Kontrolü (Lowball Insult)
+        // -------------------------------------------------------------
+        float offerRatio = playerOffer / CustomerMinimumPrice;
+        if (offerRatio < 0.45f && traits.pride > 65)
+        {
+            result.state = NegotiationState.CustomerWalkedAway;
+            result.customerOffer = 0f;
+            result.patienceRemaining = 0;
+            result.customerDialogue = "Sen benimle dalga mı geçiyorsun?! Bu fiyata günahımı bile vermem!";
+            return result;
+        }
+
+        // Oyuncu bir önceki teklifinden daha DÜŞÜK bir teklif verirse müşteri kızıp gider
+        if (LastPlayerOffer > 0 && playerOffer < LastPlayerOffer)
+        {
+            result.state = NegotiationState.CustomerWalkedAway;
+            result.customerOffer = 0f;
+            result.patienceRemaining = 0;
+            result.customerDialogue = "Önceki teklifinden daha azını mı veriyorsun? Vaktimi harcama!";
+            return result;
+        }
+
+        LastPlayerOffer = playerOffer;
+
+        // -------------------------------------------------------------
+        // KONTROL 4: Sabır Tüketimi
+        // -------------------------------------------------------------
+        CurrentPatience--;
+
+        if (CurrentPatience <= 0)
+        {
+            result.state = NegotiationState.CustomerWalkedAway;
+            result.customerOffer = 0f;
+            result.patienceRemaining = 0;
+            result.customerDialogue = "Burada bütün gün oturamam. Anlaşamıyoruz, gidiyorum.";
+            return result;
+        }
+
+        // -------------------------------------------------------------
+        // ADIM 5: MÜŞTERİNİN KARŞI TEKLİF (COUNTER-OFFER) HESABI
+        // -------------------------------------------------------------
+        // Müşteri başlangıç fiyatından tabana doğru adım adım iner.
+        // İndirim adımını belirleyenler:
+        // - HagglingSkill yüksekse az iner (inatçı esnaf).
+        // - Urgency yüksekse çok iner (hızlı nakit lazım).
+        // - Greed yüksekse indirimi frenler.
+        float remainingGap = CurrentCustomerOffer - CustomerMinimumPrice;
+
+        // İndirim oranı (%15 ile %40 arası bir adım)
+        float stepRate = 0.25f + (traits.urgency * 0.002f) - (traits.hagglingSkill * 0.0015f) - (traits.greed * 0.001f);
+        stepRate = Mathf.Clamp(stepRate, 0.15f, 0.45f);
+
+        float calculatedNextOffer = CurrentCustomerOffer - (remainingGap * stepRate);
+
+        // Minimum sınırın altına inemez
+        calculatedNextOffer = Mathf.Max(calculatedNextOffer, CustomerMinimumPrice);
+        CurrentCustomerOffer = Mathf.Round(calculatedNextOffer / 10f) * 10f; // Düzgün yuvarlama (Örn: $750)
+
+        // -------------------------------------------------------------
+        // KONTROL 6: "Son Fiyatım" (Final Stand) Eşiği
+        // -------------------------------------------------------------
+        // Eğer müşterinin teklifi minimum tabana %5 kadar yaklaştıysa veya son sabır hakkıysa:
+        if ((CurrentCustomerOffer - CustomerMinimumPrice) <= (CustomerMinimumPrice * 0.06f) || CurrentPatience == 1)
+        {
+            CurrentCustomerOffer = CustomerMinimumPrice;
+            hasMadeFinalStand = true;
+
+            result.state = NegotiationState.FinalOfferMade;
+            result.customerOffer = CurrentCustomerOffer;
+            result.patienceRemaining = CurrentPatience;
+            result.customerDialogue = $"Daha aşağı inemem, son fiyatım ${CurrentCustomerOffer:N0}. Ya al ya da bırak.";
+            return result;
+        }
+
+        // Normal Karşı Teklif
+        result.state = NegotiationState.Ongoing;
+        result.customerOffer = CurrentCustomerOffer;
+        result.patienceRemaining = CurrentPatience;
+        result.customerDialogue = $"Bu teklif çok düşük. Senin için ${CurrentCustomerOffer:N0} seviyesine inebilirim.";
+
+        return result;
+    }
+}
+
+public enum NegotiationTactic
+{
+    None,            // Sadece kuru fiyat teklifi
+    InstantCash,     // "Nakit hemen masada": Urgency/Desperation yüksekse fiyatta %10 ek indirim yaptırır
+    PointOutDefect,  // "Bunun masrafı var": ItemAttachment düşükse müşteriyi köşeye sıkıştırır
+    PawnShopMargin   // "Ben de esnafım, kâr etmem lazım": HagglingSkill'i dengeler
+}
+
+// SubmitPlayerOffer fonksiyonunun içine eklenecek akıllı sabır ve taktik mantığı:
+public NegotiationTurnResult SubmitPlayerOfferWithTactic(float playerOffer, NegotiationTactic tactic = NegotiationTactic.None)
+{
+    // 1. Taktik Etkisi (Müşterinin zayıf noktasına vurma)
+    float effectiveOffer = playerOffer;
+
+    switch (tactic)
+    {
+        case NegotiationTactic.InstantCash:
+            // Paraya sıkışmış veya acelesi olan müşteri nakit lafını duyunca yumuşar
+            if (traits.urgency > 60 || traits.desperation > 60)
+            {
+                effectiveOffer *= 1.08f; // Teklifi sanki %8 daha yüksekmiş gibi algılar
+                Debug.Log("<color=green>[Taktik Başarılı]:</color> Müşteri sıcak parayı görünce gözleri parladı.");
+            }
+            break;
+
+        case NegotiationTactic.PointOutDefect:
+            // Gururlu olmayan müşteriye kusuru gösterirsen taban fiyatını aşağı çeker
+            if (traits.pride < 60)
+            {
+                CustomerMinimumPrice *= 0.93f; // Taban fiyatını %7 daha aşağı indirdi
+                Debug.Log("<color=green>[Taktik Başarılı]:</color> Masrafı duyunca direnci kırıldı.");
+            }
+            else
+            {
+                CurrentPatience--; // Kibirli müşteriye laf sokarsan ekstra sinirlenir!
+                Debug.Log("<color=red>[Taktik Ters Tepti]:</color> 'Malımı kötüleme!' diyerek sinirlendi.");
+            }
+            break;
+    }
+
+    // 2. Akıllı Sabır: Eğer teklif müşterinin istediğine çok yakınsa (%5'ten az fark varsa) sabır eksilmez!
+    float differenceRatio = Mathf.Abs(CurrentCustomerOffer - playerOffer) / CurrentCustomerOffer;
+    if (differenceRatio > 0.05f)
+    {
+        CurrentPatience--; // Sadece uzak tekliflerde sabır tüket
+    }
+    else
+    {
+        Debug.Log("<color=yellow>[Müşteri Memnun]:</color> 'Makul bir adımdı, konuşmaya devam edebiliriz.'");
+    }
+
+    // Geri kalan kabul/ret matematiği aynı şekilde çalışır...
+    return SubmitPlayerOffer(effectiveOffer);
+}
+
