@@ -229,3 +229,174 @@ Debug.Log(expertReport);
 // 4. Artık oyuncu eşyanın değerinin çöp olduğunu anlar ve ConfrontationSystem ile müşterinin yüzüne vurabilir!
 
 
+using UnityEngine;
+
+public enum AppraiserTier
+{
+    NoviceApprentice, // Çırak / Ucuz Eksper: $50, Doğruluk: %65
+    SkilledExaminer,  // Usta / İyi Eksper: $250, Doğruluk: %90
+    MasterSpecialist  // Baş Uzman / Mahkeme Bilirkişisi: $1,000, Doğruluk: %98
+}
+
+[System.Serializable]
+public class AppraiserProfile
+{
+    public string title;
+    public AppraiserTier tier;
+    public float cost;
+    [Range(0, 100)] public int accuracyPercent; // Başarı oranı
+    public float inspectionDurationSeconds;     // Masada bekleme süresi
+
+    public AppraiserProfile(AppraiserTier t)
+    {
+        tier = t;
+        switch (t)
+        {
+            case AppraiserTier.NoviceApprentice:
+                title = "Çırak / Mahalle Eksperi";
+                cost = 50f;
+                accuracyPercent = 65;
+                inspectionDurationSeconds = 1.5f;
+                break;
+
+            case AppraiserTier.SkilledExaminer:
+                title = "Sertifikalı Usta Eksper";
+                cost = 250f;
+                accuracyPercent = 90;
+                inspectionDurationSeconds = 3.0f;
+                break;
+
+            case AppraiserTier.MasterSpecialist:
+                title = "Müze & Müzayede Baş Uzmanı";
+                cost = 1000f;
+                accuracyPercent = 98; // Asla %100 değil, her zaman %2'lik tarihi yanılgı payı vardır
+                inspectionDurationSeconds = 5.0f;
+                break;
+        }
+    }
+}
+
+
+using UnityEngine;
+
+public struct AppraisalVerdict
+{
+    public bool isAccurate;                    // Eksper doğru teşhis koydu mu?
+    public AuthenticityType diagnosedStatus;   // Eksperin söylediği durum
+    public float estimatedValue;              // Eksperin biçtiği tahmini değer
+    public string expertComment;              // Eksperin oyuncuya söylediği replik
+}
+
+public static class AppraiserSystem
+{
+    /// <summary>
+    /// Seçilen kademedeki eksper eşyayı inceler ve bir kanaat raporu sunar.
+    /// </summary>
+    public static AppraisalVerdict HireAppraisal(
+        PawnShopItem item, 
+        AppraiserProfile appraiser, 
+        ref float playerCash)
+    {
+        AppraisalVerdict verdict = new AppraisalVerdict();
+
+        // 1. Nakit Kontrolü
+        if (playerCash < appraiser.cost)
+        {
+            verdict.isAccurate = false;
+            verdict.diagnosedStatus = AuthenticityType.Unknown;
+            verdict.estimatedValue = 0f;
+            verdict.expertComment = "<color=red>Kasanızda eksper ücretini karşılayacak nakit yok!</color>";
+            return verdict;
+        }
+
+        // Parayı kasadan tahsil et
+        playerCash -= appraiser.cost;
+
+        // 2. Doğruluk Zarını At (0 - 100)
+        int roll = Random.Range(1, 101);
+        bool didSucceed = roll <= appraiser.accuracyPercent;
+        verdict.isAccurate = didSucceed;
+
+        // Gerçek durum
+        AuthenticityType actual = item.overallAuthenticity;
+
+        // -------------------------------------------------------------
+        // DURUM A: EKSPER BAŞARILI OLDU (Doğru Teşhis)
+        // -------------------------------------------------------------
+        if (didSucceed)
+        {
+            verdict.diagnosedStatus = actual;
+            verdict.estimatedValue = item.currentMarketValue;
+
+            switch (actual)
+            {
+                case AuthenticityType.Authentic:
+                    verdict.expertComment = $"[{appraiser.title}]: \"Bütün damgalar ve işçilik kusursuz. Bu ürün kesinlikle %100 Orijinal. Piyasa değeri yaklaşık ${verdict.estimatedValue:N0}.\"";
+                    break;
+
+                case AuthenticityType.Modified:
+                    verdict.expertComment = $"[{appraiser.title}]: \"Dikkatli baktım; dış aksamı orijinal ancak iç parçaları sonradan değiştirilmiş melez bir ürün (Modified). Orijinal değerinin çok altına düşer.\"";
+                    break;
+
+                case AuthenticityType.Fake:
+                case AuthenticityType.Replica:
+                    verdict.expertComment = $"[{appraiser.title}]: \"Bu profesyonel bir taklit. Malzeme kalitesi orijinal standartları karşılamıyor, ürün sahte.\"";
+                    break;
+
+                case AuthenticityType.Stolen:
+                    verdict.expertComment = $"[{appraiser.title}]: \"Ürün orijinal görünüyor ama seri numarasında şüpheli bir taşlama izi var. Sıcak mal (çalıntı) olabilir.\"";
+                    break;
+
+                default:
+                    verdict.expertComment = $"[{appraiser.title}]: \"Eşyanın kondisyonu yıpranmış olsa da orijinal standartları koruyor.\"";
+                    break;
+            }
+        }
+        // -------------------------------------------------------------
+        // DURUM B: EKSPER YANILDI (False Positive / False Negative)
+        // -------------------------------------------------------------
+        else
+        {
+            // Yanılma Senaryoları
+            if (actual == AuthenticityType.Authentic)
+            {
+                // Orijinal mala "Sahte / Değersiz" diyerek oyuncuyu fırsattan edebilir
+                verdict.diagnosedStatus = AuthenticityType.Replica;
+                verdict.estimatedValue = item.currentMarketValue * 0.20f;
+                verdict.expertComment = $"[{appraiser.title}]: \"Bence bu orijinal değil, iyi bir replika gibi hissettirdi. Fazla para vermeni önermem.\" (YANLIŞ TEŞHİS)";
+            }
+            else
+            {
+                // Sahte mala "Orijinal" diyerek oyuncuyu dolandırılma riskine sokar!
+                verdict.diagnosedStatus = AuthenticityType.Authentic;
+                verdict.estimatedValue = item.template.baseValue * 1.1f;
+                verdict.expertComment = $"[{appraiser.title}]: \"Gözümden kaçmaz, bu parça kesinlikle orijinal! Kaçırma derim.\" (KUSURU GÖREMEDİ)";
+            }
+        }
+
+        // İnceleme sonucunu eşyaya işle (Oyuncu eksperin sözüne inanır)
+        item.isIdentified = true;
+        item.authenticity = verdict.diagnosedStatus;
+
+        return verdict;
+    }
+}
+
+
+// Örnek: Masaya $12,000 değerinde bir "Patek Philippe Saat" geldi.
+// Müşteri $4,000 istiyor (Çok şüpheli ve ucuz).
+
+float playerCash = 5000f;
+
+// 1. SEÇENEK: Ucuz Eksper Tut ($50)
+AppraiserProfile cheapAppraiser = new AppraiserProfile(AppraiserTier.NoviceApprentice);
+AppraisalVerdict cheapResult = AppraiserSystem.HireAppraisal(currentItem, cheapAppraiser, ref playerCash);
+// %35 ihtimalle çırak yanılabilir! 
+// Çırak: "Abi valla orijinal bu, kaçırma!" der ama saat çakmadır; oyuncu $4,000'ı batırır.
+
+// 2. SEÇENEK: Baş Uzman Çağır ($1,000)
+AppraiserProfile masterAppraiser = new AppraiserProfile(AppraiserTier.MasterSpecialist);
+AppraisalVerdict masterResult = AppraiserSystem.HireAppraisal(currentItem, masterAppraiser, ref playerCash);
+// Kasadan $1,000 gider ama %98 ihtimalle:
+// "Mekanizmanın içine ucuz çarklar takılmış (Modified), gerçek değeri $500 bile etmez!" diyerek oyuncuyu $4,000 batmaktan kurtarır.
+
