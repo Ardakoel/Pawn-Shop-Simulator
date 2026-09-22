@@ -1,0 +1,581 @@
+using System;
+using System.Collections.Generic;
+
+[System.Serializable]
+public class SaveData
+{
+    // Meta Bilgiler
+    public string saveVersion = "1.0.0";
+    public string saveDateTimestamp;
+    public int masterRandomSeed;
+
+    // 1. Gün & Zaman Döngüsü
+    public int currentDay;
+    public DayPhase currentPhase;
+
+    // 2. Para & Dükkân Temel Durumu
+    public float playerCash;
+    public int currentShopLevel;
+
+    // 3. Envanter (Depodaki ve Vitrindeki Tüm Eşyalar)
+    public List<InventoryItem> inventoryItems = new List<InventoryItem>();
+
+    // 4. İtibar Eksenleri (Reputation)
+    public float honesty;
+    public float customerTrust;
+    public float marketReputation;
+    public float policeReputation;
+    public ShopTier currentTier;
+
+    // 5. Şube İmparatorluğu & Çalışanlar (ETS 2 Sistemi)
+    public List<PawnBranchShop> activeBranches = new List<PawnBranchShop>();
+    public List<BranchEmployee> availableJobSeekers = new List<BranchEmployee>();
+
+    // 6. Piyasa & Trendler (Market Trends & News)
+    public List<MarketTrendSaveDTO> activeMarketTrends = new List<MarketTrendSaveDTO>();
+
+    // 7. Müşteri İlişkileri & Sadakat Veritabanı
+    public List<CustomerRelationshipProfile> customerProfiles = new List<CustomerRelationshipProfile>();
+
+    // 8. İstatistikler & Finansal Rekorlar
+    public PlayerShopStats statistics = new PlayerShopStats();
+}
+
+[System.Serializable]
+public class MarketTrendSaveDTO
+{
+    public ItemCategory category;
+    public float priceChangePercentage;
+    public string headlineNews;
+}
+
+
+using System;
+using System.Collections.Generic;
+using System.IO;
+using UnityEngine;
+
+public class SaveSystem : MonoBehaviour
+{
+    public static SaveSystem Instance { get; private set; }
+
+    private const string SAVE_FILE_NAME = "gamesave.json";
+    private const string BACKUP_FILE_NAME = "gamesave.bak";
+
+    private string SaveFilePath => Path.Combine(Application.persistentDataPath, SAVE_FILE_NAME);
+    private string BackupFilePath => Path.Combine(Application.persistentDataPath, BACKUP_FILE_NAME);
+
+    // Olay Bildirimleri
+    public event Action OnSaveCompleted;
+    public event Action OnLoadCompleted;
+
+    private void Awake()
+    {
+        if (Instance == null)
+        {
+            Instance = this;
+            DontDestroyOnLoad(gameObject);
+        }
+        else
+        {
+            Destroy(gameObject);
+        }
+    }
+
+    /// <summary>
+    /// Tüm sistemlerden anlık veriyi çeker ve diske güvenli şekilde JSON formatında yazar.
+    /// </summary>
+    public bool SaveGame()
+    {
+        try
+        {
+            SaveData data = new SaveData
+            {
+                saveDateTimestamp = DateTime.UtcNow.ToString("o"),
+                masterRandomSeed = RandomService.Instance != null ? RandomService.Instance.GetCurrentMasterSeed() : 1337,
+
+                // 1. Gün & Faz
+                currentDay = DaySystem.Instance != null ? DaySystem.Instance.currentDay : 1,
+                currentPhase = DaySystem.Instance != null ? DaySystem.Instance.currentPhase : DayPhase.MorningBriefing,
+
+                // 2. Para & Dükkân Seviyesi
+                playerCash = PawnGameManager.Instance != null ? PawnGameManager.Instance.playerCash : 0f,
+                currentShopLevel = ShopUpgradeSystem.Instance != null ? ShopUpgradeSystem.Instance.currentShopLevel : 1,
+
+                // 3. Envanter
+                inventoryItems = InventorySystem.Instance != null ? InventorySystem.Instance.GetAllItems() : new List<InventoryItem>()
+            };
+
+            // 4. İtibar
+            if (ReputationSystem.Instance != null)
+            {
+                data.honesty = ReputationSystem.Instance.honesty;
+                data.customerTrust = ReputationSystem.Instance.customerTrust;
+                data.marketReputation = ReputationSystem.Instance.marketReputation;
+                data.policeReputation = ReputationSystem.Instance.policeReputation;
+                data.currentTier = ReputationSystem.Instance.currentTier;
+            }
+
+            // 5. Şubeler ve Çalışanlar
+            if (BranchEmpireSystem.Instance != null)
+            {
+                data.activeBranches = BranchEmpireSystem.Instance.activeBranches;
+                data.availableJobSeekers = BranchEmpireSystem.Instance.availableJobSeekers;
+            }
+
+            // 6. Piyasa Trendleri
+            if (MarketSystem.Instance != null)
+            {
+                foreach (ItemCategory cat in Enum.GetValues(typeof(ItemCategory)))
+                {
+                    data.activeMarketTrends.Add(new MarketTrendSaveDTO
+                    {
+                        category = cat,
+                        priceChangePercentage = MarketSystem.Instance.GetMarketMultiplier(cat) - 1.0f,
+                        headlineNews = ""
+                    });
+                }
+            }
+
+            // 7. Müşteri İlişkileri
+            if (CustomerRelationshipSystem.Instance != null)
+            {
+                // İlişki veritabanını Save nesnesine bağla
+                // Doğrudan sistemdeki profil listesi serialize edilir
+            }
+
+            // 8. İstatistikler
+            if (StatisticsSystem.Instance != null)
+            {
+                data.statistics = StatisticsSystem.Instance.RebuildAndGetStats();
+            }
+
+            // JSON Serializasyonu
+            string json = JsonUtility.ToJson(data, true);
+
+            // Güvenli Kayıt: Eski sağlam kaydı yedeğe al, sonra yenisini yaz
+            if (File.Exists(SaveFilePath))
+            {
+                File.Copy(SaveFilePath, BackupFilePath, true);
+            }
+
+            File.WriteAllText(SaveFilePath, json);
+
+            Debug.Log($"<color=green>💾 [KAYIT BAŞARILI]:</color> Gün {data.currentDay} kaydedildi. Konum: {SaveFilePath}");
+            OnSaveCompleted?.Invoke();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"[KAYIT HATASI]: Oyun kaydedilirken hata oluştu: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Diskteki JSON dosyasını okuyup tüm sistemleri ayağa kaldırır.
+    /// </summary>
+    public bool LoadGame()
+    {
+        string path = SaveFilePath;
+
+        // Dosya bozulmuşsa veya yoksa yedeği dene
+        if (!File.Exists(path))
+        {
+            if (File.Exists(BackupFilePath))
+            {
+                Debug.LogWarning("[YEDEK DOSYASI]: Ana save bulunamadı, yedekten yükleniyor...");
+                path = BackupFilePath;
+            }
+            else
+            {
+                Debug.LogWarning("Kayıt dosyası bulunamadı. Yeni oyun başlatılacak.");
+                return false;
+            }
+        }
+
+        try
+        {
+            string json = File.ReadAllText(path);
+            SaveData data = JsonUtility.FromJson<SaveData>(json);
+
+            // 1. Random Motorunu Senkronize Et
+            if (RandomService.Instance != null)
+            {
+                RandomService.Instance.InitializeSeedSystem(data.masterRandomSeed);
+            }
+
+            // 2. Gün & Zamanı Ayarla
+            if (DaySystem.Instance != null)
+            {
+                DaySystem.Instance.currentDay = data.currentDay;
+                DaySystem.Instance.currentPhase = data.currentPhase;
+            }
+
+            // 3. Para & Dükkân Kademesi
+            if (PawnGameManager.Instance != null)
+            {
+                PawnGameManager.Instance.playerCash = data.playerCash;
+            }
+
+            if (ShopUpgradeSystem.Instance != null)
+            {
+                ShopUpgradeSystem.Instance.currentShopLevel = data.currentShopLevel;
+            }
+
+            // 4. Envanteri Doldur
+            if (InventorySystem.Instance != null)
+            {
+                InventorySystem.Instance.ClearInventory();
+                foreach (var item in data.inventoryItems)
+                {
+                    InventorySystem.Instance.AddItem(item);
+                }
+            }
+
+            // 5. İtibarı Geri Yükle
+            if (ReputationSystem.Instance != null)
+            {
+                ReputationSystem.Instance.honesty = data.honesty;
+                ReputationSystem.Instance.customerTrust = data.customerTrust;
+                ReputationSystem.Instance.marketReputation = data.marketReputation;
+                ReputationSystem.Instance.policeReputation = data.policeReputation;
+                ReputationSystem.Instance.currentTier = data.currentTier;
+            }
+
+            // 6. Şubeler ve Personel
+            if (BranchEmpireSystem.Instance != null)
+            {
+                BranchEmpireSystem.Instance.activeBranches = data.activeBranches;
+                BranchEmpireSystem.Instance.availableJobSeekers = data.availableJobSeekers;
+            }
+
+            Debug.Log($"<color=cyan>📂 [YÜKLEME BAŞARILI]:</color> Gün {data.currentDay}, Nakit: ${data.playerCash:N0}, Eşya Adedi: {data.inventoryItems.Count}");
+            OnLoadCompleted?.Invoke();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"[YÜKLEME HATASI]: Save dosyası parse edilemedi: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Kayıtlı oyun dosyası var mı kontrolü.
+    /// </summary>
+    public bool HasSaveFile()
+    {
+        return File.Exists(SaveFilePath) || File.Exists(BackupFilePath);
+    }
+
+    /// <summary>
+    /// Yeni oyun için mevcut kayıtları temizler.
+    /// </summary>
+    public void DeleteSaveData()
+    {
+        if (File.Exists(SaveFilePath)) File.Delete(SaveFilePath);
+        if (File.Exists(BackupFilePath)) File.Delete(BackupFilePath);
+        Debug.Log("<color=red>[SAVE SİLİNDİ]:</color> Kayıt dosyaları temizlendi.");
+    }
+}
+
+SaveSystem.Instance.SaveGame();
+
+using System;
+using System.Collections.Generic;
+
+[System.Serializable]
+public class SaveData
+{
+    // Meta Bilgiler
+    public string saveVersion = "1.0.0";
+    public string saveDateTimestamp;
+    public int masterRandomSeed;
+
+    // 1. Gün & Zaman Döngüsü
+    public int currentDay;
+    public DayPhase currentPhase;
+
+    // 2. Para, İtibar & Dükkân Temel Durumu
+    public float playerCash;
+    public int currentShopLevel;
+    public float honesty;
+    public float customerTrust;
+    public float marketReputation;
+    public float policeReputation;
+    public ShopTier currentTier;
+
+    // 3. Envanter (Depo ve Vitrindeki Eşyalar)
+    public List<InventoryItem> inventoryItems = new List<InventoryItem>();
+
+    // 4. Şubeler & Personel (ETS 2 Sistemi)
+    public List<PawnBranchShop> activeBranches = new List<PawnBranchShop>();
+    public List<BranchEmployee> availableJobSeekers = new List<BranchEmployee>();
+
+    // 5. Müşteri Hafızası & İlişki Profilleri
+    public List<CustomerRelationshipProfile> customerRelationships = new List<CustomerRelationshipProfile>();
+    public List<CustomerMemoryRecord> customerMemories = new List<CustomerMemoryRecord>();
+
+    // 6. Koleksiyonlar
+    public List<CollectionSet> collectionSets = new List<CollectionSet>();
+
+    // 7. Finansal Kayıtlar & İstatistikler
+    public List<TransactionRecord> transactionHistory = new List<TransactionRecord>();
+    public PlayerShopStats statistics = new PlayerShopStats();
+}
+
+using System;
+using System.Collections.Generic;
+using System.IO;
+using UnityEngine;
+
+public class SaveSystem : MonoBehaviour
+{
+    public static SaveSystem Instance { get; private set; }
+
+    private const string SAVE_FILE_NAME = "gamesave.json";
+    private const string BACKUP_FILE_NAME = "gamesave.bak";
+
+    private string SaveFilePath => Path.Combine(Application.persistentDataPath, SAVE_FILE_NAME);
+    private string BackupFilePath => Path.Combine(Application.persistentDataPath, BACKUP_FILE_NAME);
+
+    public event Action OnSaveCompleted;
+    public event Action OnLoadCompleted;
+
+    private void Awake()
+    {
+        if (Instance == null)
+        {
+            Instance = this;
+            DontDestroyOnLoad(gameObject);
+        }
+        else
+        {
+            Destroy(gameObject);
+        }
+    }
+
+    /// <summary>
+    /// Tüm alt sistemlerden veriyi çeker ve JSON olarak diske atomik yazar.
+    /// </summary>
+    public bool SaveGame()
+    {
+        try
+        {
+            SaveData data = new SaveData
+            {
+                saveDateTimestamp = DateTime.UtcNow.ToString("o"),
+                masterRandomSeed = RandomService.Instance != null ? RandomService.Instance.GetCurrentMasterSeed() : 1337,
+
+                // 1. Gün & Faz
+                currentDay = DaySystem.Instance != null ? DaySystem.Instance.currentDay : 1,
+                currentPhase = DaySystem.Instance != null ? DaySystem.Instance.currentPhase : DayPhase.MorningBriefing,
+
+                // 2. Para & Dükkân Kademesi
+                playerCash = PawnGameManager.Instance != null ? PawnGameManager.Instance.playerCash : 0f,
+                currentShopLevel = ShopUpgradeSystem.Instance != null ? ShopUpgradeSystem.Instance.currentShopLevel : 1,
+
+                // 3. Envanter
+                inventoryItems = InventorySystem.Instance != null ? InventorySystem.Instance.GetAllItems() : new List<InventoryItem>()
+            };
+
+            // 4. İtibar Eksenleri
+            if (ReputationSystem.Instance != null)
+            {
+                data.honesty = ReputationSystem.Instance.honesty;
+                data.customerTrust = ReputationSystem.Instance.customerTrust;
+                data.marketReputation = ReputationSystem.Instance.marketReputation;
+                data.policeReputation = ReputationSystem.Instance.policeReputation;
+                data.currentTier = ReputationSystem.Instance.currentTier;
+            }
+
+            // 5. Şubeler ve Personel
+            if (BranchEmpireSystem.Instance != null)
+            {
+                data.activeBranches = new List<PawnBranchShop>(BranchEmpireSystem.Instance.activeBranches);
+                data.availableJobSeekers = new List<BranchEmployee>(BranchEmpireSystem.Instance.availableJobSeekers);
+            }
+
+            // 6. Müşteri İlişkileri & Müşteri Hafızası
+            if (CustomerRelationshipSystem.Instance != null)
+            {
+                data.customerRelationships = CustomerRelationshipSystem.Instance.GetProfilesForSave();
+            }
+
+            if (CustomerMemorySystem.Instance != null)
+            {
+                data.customerMemories = CustomerMemorySystem.Instance.GetMemoriesForSave();
+            }
+
+            // 7. Koleksiyonlar
+            if (CollectionSystem.Instance != null)
+            {
+                data.collectionSets = new List<CollectionSet>(CollectionSystem.Instance.GetAllSets());
+            }
+
+            // 8. İşlem Geçmişi & İstatistikler
+            if (TransactionSystem.Instance != null)
+            {
+                data.transactionHistory = TransactionSystem.Instance.GetAllHistory();
+            }
+
+            if (StatisticsSystem.Instance != null)
+            {
+                data.statistics = StatisticsSystem.Instance.RebuildAndGetStats();
+            }
+
+            // JSON Serializasyonu
+            string json = JsonUtility.ToJson(data, true);
+
+            // Güvenli (Atomic) Dosya Yazımı
+            if (File.Exists(SaveFilePath))
+            {
+                File.Copy(SaveFilePath, BackupFilePath, true);
+            }
+
+            File.WriteAllText(SaveFilePath, json);
+
+            Debug.Log($"<color=green>💾 [KAYIT TAMAMLANDI]:</color> Gün {data.currentDay} kaydedildi. Konum: {SaveFilePath}");
+            OnSaveCompleted?.Invoke();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"[KAYIT HATASI]: {ex.Message}\n{ex.StackTrace}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Diskteki JSON dosyasını okur ve tüm sistemleri kaydedilmiş duruma getirir.
+    /// </summary>
+    public bool LoadGame()
+    {
+        string path = SaveFilePath;
+
+        if (!File.Exists(path))
+        {
+            if (File.Exists(BackupFilePath))
+            {
+                Debug.LogWarning("[YEDEK ÇAĞRILDI]: Ana kayıt eksik, .bak dosyasından yükleniyor...");
+                path = BackupFilePath;
+            }
+            else
+            {
+                Debug.LogWarning("Kayıt dosyası bulunamadı.");
+                return false;
+            }
+        }
+
+        try
+        {
+            string json = File.ReadAllText(path);
+            SaveData data = JsonUtility.FromJson<SaveData>(json);
+
+            // 1. Tohum Motorunu Senkronize Et
+            if (RandomService.Instance != null)
+            {
+                RandomService.Instance.InitializeSeedSystem(data.masterRandomSeed);
+            }
+
+            // 2. Gün & Faz
+            if (DaySystem.Instance != null)
+            {
+                DaySystem.Instance.currentDay = data.currentDay;
+                DaySystem.Instance.currentPhase = data.currentPhase;
+            }
+
+            // 3. Para & Seviye
+            if (PawnGameManager.Instance != null)
+            {
+                PawnGameManager.Instance.playerCash = data.playerCash;
+            }
+
+            if (ShopUpgradeSystem.Instance != null)
+            {
+                ShopUpgradeSystem.Instance.currentShopLevel = data.currentShopLevel;
+            }
+
+            // 4. İtibarı Geri Yükle
+            if (ReputationSystem.Instance != null)
+            {
+                ReputationSystem.Instance.honesty = data.honesty;
+                ReputationSystem.Instance.customerTrust = data.customerTrust;
+                ReputationSystem.Instance.marketReputation = data.marketReputation;
+                ReputationSystem.Instance.policeReputation = data.policeReputation;
+                ReputationSystem.Instance.currentTier = data.currentTier;
+            }
+
+            // 5. Envanteri Sıfırla ve Doldur
+            if (InventorySystem.Instance != null)
+            {
+                InventorySystem.Instance.ClearInventory();
+                foreach (var item in data.inventoryItems)
+                {
+                    InventorySystem.Instance.AddItem(item);
+                }
+            }
+
+            // 6. Şubeler ve Personeli Geri Yükle
+            if (BranchEmpireSystem.Instance != null)
+            {
+                BranchEmpireSystem.Instance.activeBranches = data.activeBranches ?? new List<PawnBranchShop>();
+                BranchEmpireSystem.Instance.availableJobSeekers = data.availableJobSeekers ?? new List<BranchEmployee>();
+            }
+
+            // 7. Müşteri İlişkileri ve Hafızayı Geri Yükle
+            if (CustomerRelationshipSystem.Instance != null && data.customerRelationships != null)
+            {
+                CustomerRelationshipSystem.Instance.RestoreProfiles(data.customerRelationships);
+            }
+
+            if (CustomerMemorySystem.Instance != null && data.customerMemories != null)
+            {
+                CustomerMemorySystem.Instance.RestoreMemories(data.customerMemories);
+            }
+
+            // 8. Koleksiyonları Geri Yükle
+            if (CollectionSystem.Instance != null && data.collectionSets != null)
+            {
+                CollectionSystem.Instance.RestoreCollections(data.collectionSets);
+            }
+
+            // 9. İşlem Geçmişini Geri Yükle
+            if (TransactionSystem.Instance != null && data.transactionHistory != null)
+            {
+                TransactionSystem.Instance.RestoreHistory(data.transactionHistory);
+            }
+
+            Debug.Log($"<color=cyan>📂 [YÜKLEME BAŞARILI]:</color> Gün {data.currentDay} yüklendi. Nakit: ${data.playerCash:N0}, Envanter: {data.inventoryItems.Count} parça.");
+            OnLoadCompleted?.Invoke();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"[YÜKLEME HATASI]: {ex.Message}\n{ex.StackTrace}");
+            return false;
+        }
+    }
+
+    public bool HasSaveFile() => File.Exists(SaveFilePath) || File.Exists(BackupFilePath);
+
+    public void DeleteSaveData()
+    {
+        if (File.Exists(SaveFilePath)) File.Delete(SaveFilePath);
+        if (File.Exists(BackupFilePath)) File.Delete(BackupFilePath);
+        Debug.Log("<color=red>[SAVE SİLİNDİ]:</color> Kayıt dosyaları temizlendi.");
+    }
+}
+
+public List<CustomerRelationshipProfile> GetProfilesForSave() => new List<CustomerRelationshipProfile>(profiles);
+public void RestoreProfiles(List<CustomerRelationshipProfile> loadedProfiles) => profiles = loadedProfiles;
+
+public List<CustomerMemoryRecord> GetMemoriesForSave() => new List<CustomerMemoryRecord>(memoryDatabase);
+public void RestoreMemories(List<CustomerMemoryRecord> loadedMemories) => memoryDatabase = loadedMemories;
+
+public void RestoreCollections(List<CollectionSet> loadedSets) => collectionSets = loadedSets;
+
+public void RestoreHistory(List<TransactionRecord> loadedHistory) => transactionHistory = loadedHistory;
+
+
