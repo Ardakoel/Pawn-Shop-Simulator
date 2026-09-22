@@ -1,0 +1,163 @@
+using System;
+using UnityEngine;
+
+public enum ShopTier
+{
+    BackAlleyShack,    // Köhne Arka Sokak Dükkânı (Başlangıç)
+    NeighborhoodPawn,  // Mahalle Rehin Dükkânı
+    RespectedDealer,   // Tanınan & Güvenilir Esnaf
+    EliteAuctionHouse  // Elit Müzayede & Lüks Galeri
+}
+
+[System.Serializable]
+public class ReputationSystem : MonoBehaviour
+{
+    public static ReputationSystem Instance { get; private set; }
+
+    [Header("İtibar Eksenleri (0 - 100)")]
+    [Range(0, 100)] public float honesty = 50f;            // Dürüstlük: Kusurları gizlememe, adil ekspertiz
+    [Range(0, 100)] public float customerTrust = 50f;       // Müşteri Güveni: Pazarlıkta saygılı olma, son anda caymama
+    [Range(0, 100)] public float marketReputation = 50f;     // Piyasa Gücü: Başarılı satışlar, vitrin hacmi, nakit gücü
+    [Range(0, 100)] public float policeReputation = 70f;     // Emniyet İlişkisi: Temiz kayıtlar, çalıntı mal almama
+
+    [Header("Dükkân Kademesi")]
+    public ShopTier currentTier = ShopTier.NeighborhoodPawn;
+
+    // Olay Bildirimleri (UI güncellemeleri için)
+    public event Action OnReputationUpdated;
+    public event Action<ShopTier> OnTierUpgraded;
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+    }
+
+    // -------------------------------------------------------------
+    // İTİBARI DEĞİŞTİREN AKSİYONLAR
+    // -------------------------------------------------------------
+
+    /// <summary>
+    /// Başarılı ve adil bir alışveriş tamamlandığında.
+    /// </summary>
+    public void RegisterFairTrade()
+    {
+        customerTrust = Mathf.Clamp(customerTrust + 1.5f, 0f, 100f);
+        marketReputation = Mathf.Clamp(marketReputation + 1.0f, 0f, 100f);
+        EvaluateTier();
+        OnReputationUpdated?.Invoke();
+    }
+
+    /// <summary>
+    /// Oyuncu müşteriyi aşırı ezdiğinde veya düşük teklifle hakaret ettiğinde.
+    /// </summary>
+    public void RegisterGreedyAction()
+    {
+        customerTrust = Mathf.Clamp(customerTrust - 3.0f, 0f, 100f);
+        honesty = Mathf.Clamp(honesty - 1.5f, 0f, 100f);
+        EvaluateTier();
+        OnReputationUpdated?.Invoke();
+    }
+
+    /// <summary>
+    /// Çalıntı eşya alındığı polis tarafından tespit edildiğinde.
+    /// </summary>
+    public void RegisterPoliceBust(int stolenCount)
+    {
+        policeReputation = Mathf.Clamp(policeReputation - (stolenCount * 15f), 0f, 100f);
+        honesty = Mathf.Clamp(honesty - 10f, 0f, 100f);
+        marketReputation = Mathf.Clamp(marketReputation - 5f, 0f, 100f);
+        EvaluateTier();
+        OnReputationUpdated?.Invoke();
+    }
+
+    /// <summary>
+    /// Polis denetimi tertemiz tamamlandığında.
+    /// </summary>
+    public void RegisterCleanInspection()
+    {
+        policeReputation = Mathf.Clamp(policeReputation + 8f, 0f, 100f);
+        OnReputationUpdated?.Invoke();
+    }
+
+    // -------------------------------------------------------------
+    // İTİBARIN OYUNA ETKİLERİ (SPAWN VE FİYAT ÇARPANLARI)
+    // -------------------------------------------------------------
+
+    /// <summary>
+    /// Gelen müşterinin zenginlik ve bütçe çarpanı (Customer Wealth Multiplier).
+    /// MarketReputation ve CustomerTrust arttıkça zengin müşteriler gelir.
+    /// </summary>
+    public float GetCustomerWealthMultiplier()
+    {
+        float score = (marketReputation * 0.6f) + (customerTrust * 0.4f);
+        // 0 skorda %60 bütçe, 100 skorda %220 bütçeli zenginler gelir
+        return Mathf.Lerp(0.6f, 2.2f, score / 100f);
+    }
+
+    /// <summary>
+    /// Tezgâha Rare / Epic / Legendary eşya gelme şansı.
+    /// </summary>
+    public ItemRarity RollItemRarity()
+    {
+        float overallRep = (marketReputation + customerTrust) / 2f;
+        float roll = UnityEngine.Random.Range(0f, 100f);
+
+        // İtibar yükseldikçe efsanevi eşya düşme oranı katlanır
+        if (overallRep >= 80)
+        {
+            if (roll < 8f) return ItemRarity.Legendary;
+            if (roll < 25f) return ItemRarity.Epic;
+            if (roll < 55f) return ItemRarity.Rare;
+            if (roll < 80f) return ItemRarity.Uncommon;
+            return ItemRarity.Common;
+        }
+        else if (overallRep >= 50)
+        {
+            if (roll < 2f) return ItemRarity.Legendary;
+            if (roll < 12f) return ItemRarity.Epic;
+            if (roll < 35f) return ItemRarity.Rare;
+            if (roll < 65f) return ItemRarity.Uncommon;
+            return ItemRarity.Common;
+        }
+        else
+        {
+            // Düşük itibar: Çoğunlukla sıradan ve ucuz eşyalar gelir
+            if (roll < 5f) return ItemRarity.Rare;
+            if (roll < 25f) return ItemRarity.Uncommon;
+            return ItemRarity.Common;
+        }
+    }
+
+    /// <summary>
+    /// Bir günde dükkana uğrayacak toplam müşteri sayısı.
+    /// </summary>
+    public int GetDailyCustomerCount()
+    {
+        float score = (marketReputation * 0.5f) + (customerTrust * 0.5f);
+        // Düşük itibarda günde 3-4 müşteri, elit dükkanda 8-12 müşteri
+        return Mathf.RoundToInt(Mathf.Lerp(3f, 12f, score / 100f));
+    }
+
+    // -------------------------------------------------------------
+    // DÜKKÂN KADEMESİNİ KONTROL ETME (TIER PROGRESSION)
+    // -------------------------------------------------------------
+    private void EvaluateTier()
+    {
+        float avgScore = (honesty + customerTrust + marketReputation + policeReputation) / 4f;
+
+        ShopTier previousTier = currentTier;
+
+        if (avgScore >= 80f) currentTier = ShopTier.EliteAuctionHouse;
+        else if (avgScore >= 60f) currentTier = ShopTier.RespectedDealer;
+        else if (avgScore >= 35f) currentTier = ShopTier.NeighborhoodPawn;
+        else currentTier = ShopTier.BackAlleyShack;
+
+        if (currentTier != previousTier)
+        {
+            Debug.Log($"<color=yellow>🏆 [DÜKKÂN SEVİYE ATLADI]:</color> Yeni Kademe: <b>{currentTier}</b>!");
+            OnTierUpgraded?.Invoke(currentTier);
+        }
+    }
+}
+
