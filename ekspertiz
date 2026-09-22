@@ -1,0 +1,231 @@
+using UnityEngine;
+
+[System.Serializable]
+public class ItemInspectionState
+{
+    [Header("Temel İnceleme ile Açılanlar")]
+    public bool isBasicInspected = false;
+    public bool isConditionRevealed = false;
+    public bool isWeightRevealed = false;
+    public bool isBrandRevealed = false;
+    public bool isSerialNumberRevealed = false;
+    public string visualFlawHint = "Henüz incelenmedi."; // İlk bakışta fark edilen yüzeysel iz
+
+    [Header("Uzman Ekspertiz ile Açılanlar (Kategoriye Özel)")]
+    public bool isExpertInspected = false;
+    public bool isInternalMechanismRevealed = false; // Saatler için (Mekanizma orijinal mi?)
+    public bool isMetalPurityRevealed = false;       // Mücevher/Altın için (Karat / Saflık / Kaplama mı?)
+    public bool isCanvasPigmentRevealed = false;     // Tablolar için (Boya ve İmza dönemi)
+    public bool isPoliceRecordChecked = false;       // Çalıntı kaydı sorgulandı mı?
+
+    public AuthenticityType knownAuthenticity = AuthenticityType.Unknown;
+}
+
+using UnityEngine;
+
+public enum ExpertType
+{
+    Watchmaker,       // Saat Ustası (Mekanizma, yaylar, kalibre kontrolü)
+    Gemologist,       // Mücevher / Değerli Maden Uzmanı (Asit, karat, sahte taş testi)
+    ArtAppraiser,     // Sanat Tarihçisi (Tablo, vernik, pigment, imza testi)
+    AntiqueSpecialist // Antika & Tarihi Eser Eksperi (Sikke, fosil, eski mobilya)
+}
+
+public static class InspectionSystem
+{
+    // -------------------------------------------------------------
+    // 1. KADEME: OYUNCUNUN KENDİ YAPTIĞI HIZLI İNCELEME
+    // -------------------------------------------------------------
+    /// <summary>
+    /// Oyuncu tezgâhtaki büyüteç ve teraziyi kullanarak yüzeysel detayları ortaya çıkarır.
+    /// Ekspertiz gerektirmeyen temel özellikleri çözer.
+    /// </summary>
+    public static void PerformBasicInspection(PawnShopItem item, ItemInspectionState state)
+    {
+        state.isBasicInspected = true;
+        state.isConditionRevealed = true;
+        state.isWeightRevealed = true;
+        state.isBrandRevealed = true;
+        state.isSerialNumberRevealed = true;
+
+        // Yüzeysel görsel ipucu (Kategoriye göre)
+        state.visualFlawHint = GenerateVisualHint(item);
+
+        Debug.Log($"<color=green>[TEMEL İNCELEME TAMAMLANDI]:</color>\n" +
+                  $"Marka: {item.template.brand}\n" +
+                  $"Kondisyon: {item.condition}\n" +
+                  $"Ağırlık: {item.template.weight:F2} kg\n" +
+                  $"Seri No: {item.serialNumber}\n" +
+                  $"İlk İzlenim: {state.visualFlawHint}");
+    }
+
+    // -------------------------------------------------------------
+    // 2. KADEME: UZMAN EKSPER ÇAĞIRMA (Kategoriye Özel Derin Test)
+    // -------------------------------------------------------------
+    /// <summary>
+    /// Saat kapağını açmak, altına asit damlatmak veya tabloya UV tutmak uzmanlık ister.
+    /// </summary>
+    public static string CallExpertAppraisal(
+        PawnShopItem item, 
+        ItemInspectionState state, 
+        ExpertType expert, 
+        ref float playerCash)
+    {
+        float fee = GetExpertFee(expert);
+
+        if (playerCash < fee)
+        {
+            return "<color=red>Kasanızda eksper ücretini karşılayacak nakit yok!</color>";
+        }
+
+        playerCash -= fee;
+        state.isExpertInspected = true;
+
+        string report = "";
+
+        switch (expert)
+        {
+            // SAAT USTASI (Watch)
+            case ExpertType.Watchmaker:
+                if (item.category == ItemCategory.Watch)
+                {
+                    state.isInternalMechanismRevealed = true;
+                    // Saat mekanizması parçasını bul
+                    ItemComponentPart mech = item.components.Find(p => p.partName.Contains("Mekanizma"));
+                    if (mech != null && mech.realStatus != AuthenticityType.Authentic)
+                    {
+                        state.knownAuthenticity = AuthenticityType.Modified;
+                        report = $"<color=red>[SAAT USTASI]:</color> 'Dış kasa orijinal Rolex ama arka kapağı açtığımda içine ucuz Asya mekanizması yerleştirildiğini gördüm! Bu saat Frankendir (Modified).'";
+                    }
+                    else
+                    {
+                        state.knownAuthenticity = AuthenticityType.Authentic;
+                        report = "<color=green>[SAAT USTASI]:</color> 'Çarklar, yakut yataklar ve kalibre %100 orijinal İsviçre üretimi. Saat tertemiz.'";
+                    }
+                }
+                else report = "Saat ustası: 'Ben sadece saatlere bakarım, bu benim uzmanlığım değil.'";
+                break;
+
+            // KUYUMCU / MÜCEVHER UZMANI (Jewelry, Coin)
+            case ExpertType.Gemologist:
+                if (item.category == ItemCategory.Jewelry || item.category == ItemCategory.Coin)
+                {
+                    state.isMetalPurityRevealed = true;
+                    ItemComponentPart core = item.components.Find(p => p.partName.Contains("Maden") || p.partName.Contains("Taş"));
+                    if (item.overallAuthenticity == AuthenticityType.Fake || (core != null && core.realStatus == AuthenticityType.Fake))
+                    {
+                        state.knownAuthenticity = AuthenticityType.Fake;
+                        report = "<color=red>[KUYUMCU]:</color> 'Asit testinde yeşil köpük çıktı! Ürün som altın değil; sadece mikronluk altın kaplama yapılmış içi bakır sahte bir taklit.'";
+                    }
+                    else
+                    {
+                        state.knownAuthenticity = AuthenticityType.Authentic;
+                        report = "<color=green>[KUYUMCU]:</color> 'Özgül ağırlık ve mihenk taşı testi kusursuz. 18 Ayar som altın, taşlar gerçek pırlanta.'";
+                    }
+                }
+                else report = "Kuyumcu: 'Bu eşyanın maden değeri yok, inceleyemem.'";
+                break;
+
+            // SANAT TARİHÇİSİ (Painting)
+            case ExpertType.ArtAppraiser:
+                if (item.category == ItemCategory.Painting)
+                {
+                    state.isCanvasPigmentRevealed = true;
+                    ItemComponentPart sig = item.components.Find(p => p.partName.Contains("İmza"));
+                    if (sig != null && sig.realStatus != AuthenticityType.Authentic)
+                    {
+                        state.knownAuthenticity = AuthenticityType.Replica;
+                        report = "<color=red>[SANAT EKSPERİ]:</color> 'Tuval ve boyalar 19. yüzyıldan kalma fakat imza sonradan modern akrilik boyayla atılmış! Tablo sahte bir taklit.'";
+                    }
+                    else
+                    {
+                        state.knownAuthenticity = AuthenticityType.Authentic;
+                        report = "<color=green>[SANAT EKSPERİ]:</color> 'Fırça darbeleri, boyadaki çatlaklar (craquelure) ve sanatçı monogramı dönemiyle birebir uyuşuyor. Nadide bir orijinal.'";
+                    }
+                }
+                else report = "Sanat eksperi: 'Tablo veya sanat eseri dışındaki eşyalar ilgi alanıma girmiyor.'";
+                break;
+
+            // ANTİKACI (Antique, Weapon, Book)
+            case ExpertType.AntiqueSpecialist:
+                if (item.category == ItemCategory.Antique || item.category == ItemCategory.Weapon || item.category == ItemCategory.Book)
+                {
+                    state.knownAuthenticity = item.overallAuthenticity;
+                    report = item.overallAuthenticity == AuthenticityType.Authentic 
+                        ? "<color=green>[ANTİKACI]:</color> 'Tarihi patent damgası ve patinası eşyanın gerçek bir antika olduğunu doğruluyor.'"
+                        : "<color=red>[ANTİKACI]:</color> 'Eskitme işlemi asitle yapılmış. Yakın zamanda üretilmiş yapay bir taklit.'";
+                }
+                else report = "Antikacı: 'Bu parça antika sınıfına girmiyor.'";
+                break;
+        }
+
+        // Genel orijinalliği güncelle
+        item.authenticity = state.knownAuthenticity;
+        item.isIdentified = true;
+
+        return report;
+    }
+
+    // -------------------------------------------------------------
+    // EKSPERTİZ ÜCRET VE İPUCU HESAPLAMALARI
+    // -------------------------------------------------------------
+    public static float GetExpertFee(ExpertType expert)
+    {
+        switch (expert)
+        {
+            case ExpertType.Watchmaker:       return 150f; // Saat açma ücreti
+            case ExpertType.Gemologist:       return 100f; // Asit ve terazi testi
+            case ExpertType.ArtAppraiser:     return 300f; // Sanat ekspertizi pahalıdır
+            case ExpertType.AntiqueSpecialist: return 200f;
+            default: return 100f;
+        }
+    }
+
+    private static string GenerateVisualHint(PawnShopItem item)
+    {
+        switch (item.category)
+        {
+            case ItemCategory.Watch:
+                return (item.overallAuthenticity == AuthenticityType.Authentic) 
+                    ? "Kadrandaki yazılar keskin, saniye kolu akıcı kayıyor." 
+                    : "Camın köşesinde hafif bir yapışkan izi var, kordon klipsi orijinalinden biraz daha hafif hissettiriyor.";
+
+            case ItemCategory.Jewelry:
+            case ItemCategory.Coin:
+                return (item.overallAuthenticity == AuthenticityType.Authentic)
+                    ? "Madenin rengi parlak ve homojen, damga net okunuyor."
+                    : "Kenarlarında hafif renk atması (pirinç tonu) var, damga silik basılmış.";
+
+            case ItemCategory.Painting:
+                return (item.overallAuthenticity == AuthenticityType.Authentic)
+                    ? "Boya tabakası doğal kurumuş, ahşap şasede kurt delikleri ve toz birikintisi mevcut."
+                    : "Boya kokusu beklenenden daha taze geliyor, vernikte yapay parlama var.";
+
+            default:
+                return "Genel aşınmalar dışında göze batan bir kusur görünmüyor.";
+        }
+    }
+}
+
+// 1. Müşteri eşyayı koyar (Hiçbir gizli bilgi görünmez)
+ItemInspectionState state = new ItemInspectionState();
+Debug.Log("Müşteri masaya bir eşya bıraktı: 'Rolex Submariner Saat' (Değeri ve orijinalliği bilinmiyor)");
+
+// 2. Oyuncu ücretsiz "İncele" butonuna tıklar:
+InspectionSystem.PerformBasicInspection(currentItem, state);
+// Çıktı:
+// Marka: Rolex
+// Kondisyon: Good
+// Ağırlık: 0.15 kg
+// Seri No: SN-849201
+// İlk İzlenim: Camın köşesinde hafif yapışkan izi var, klips hafif hissettiriyor.
+
+// 3. Oyuncu şüphelenir ve 150$ verip "Saat Ustası" çağırır:
+string expertReport = InspectionSystem.CallExpertAppraisal(currentItem, state, ExpertType.Watchmaker, ref playerCash);
+Debug.Log(expertReport);
+// Çıktı:
+// [SAAT USTASI]: 'Dış kasa orijinal Rolex ama arka kapağı açtığımda içine ucuz Asya mekanizması yerleştirildiğini gördüm! Bu saat Frankendir (Modified).'
+
+// 4. Artık oyuncu eşyanın değerinin çöp olduğunu anlar ve ConfrontationSystem ile müşterinin yüzüne vurabilir!
+
+
