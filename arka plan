@@ -1,0 +1,275 @@
+using System;
+using UnityEngine;
+
+public enum TransactionType
+{
+    PurchaseFromCustomer, // Müşteriden eşya alımı (Gider)
+    SaleToBuyer,          // Vitrinden alıcıya satış (Gelir)
+    AuctionSale,          // Müzayede satışı
+    PoliceConfiscation,   // Polisin el koyması (Zarar)
+    DiscardLoss           // Çöpe atma / İmha (Zarar)
+}
+
+[System.Serializable]
+public class TransactionRecord
+{
+    [Header("Temel Bilgiler")]
+    public string transactionID;     // Benzersiz Fiş No (GUID)
+    public TransactionType type;
+    public string customerName;      // Müşterinin tam adı
+    public string itemName;          // Eşya adı
+    public string itemUniqueID;      // Eşyanın envanterdeki GUID'si
+    public ItemCategory category;
+
+    [Header("Finansal Kalemler")]
+    public float transactionAmount;  // Kasadan çıkan veya kasaya giren nakit
+    public float realMarketValue;    // Eşyanın gerçek piyasa/ekspertiz değeri
+    public float netProfit;          // Bu işlemden elde edilen anlık/potansiyel net kâr
+
+    [Header("Durum & Zaman")]
+    public AuthenticityType authenticity; // Eşyanın gerçek orijinallik durumu
+    public string inGameDate;             // Örn: "Day 14 - 15:45"
+    public long timestampTicks;           // Sıralama için zaman damgası
+
+    public TransactionRecord(
+        TransactionType tType,
+        string customer,
+        string item,
+        string itemUID,
+        ItemCategory cat,
+        float amount,
+        float realValue,
+        float profit,
+        AuthenticityType auth,
+        string date)
+    {
+        transactionID = Guid.NewGuid().ToString().Substring(0, 8).ToUpper();
+        type = tType;
+        customerName = customer;
+        itemName = item;
+        itemUniqueID = itemUID;
+        category = cat;
+        transactionAmount = amount;
+        realMarketValue = realValue;
+        netProfit = profit;
+        authenticity = auth;
+        inGameDate = date;
+        timestampTicks = DateTime.UtcNow.Ticks;
+    }
+}
+
+using System;
+using UnityEngine;
+
+[System.Serializable]
+public class PlayerShopStats
+{
+    [Header("Finansal Göstergeler")]
+    public float totalRevenue = 0f;          // Toplam ciro
+    public float totalExpenses = 0f;         // Toplam alış maliyeti
+    public float totalNetProfit = 0f;        // Toplam net kâr
+    public float averageProfitPerDeal = 0f;  // Ortalama kâr / işlem
+    public int totalCompletedSales = 0;      // Yapılan toplam başarılı satış adedi
+
+    [Header("Uç Değerler (Rekorlar)")]
+    public string mostExpensiveItemSoldName = "Yok";
+    public float mostExpensiveItemSoldPrice = 0f;   // Satılan en pahalı eşya
+
+    public string biggestLossItemName = "Yok";
+    public float biggestLossAmount = 0f;            // En büyük tekil zarar (dolandırılma/el koyma)
+
+    public string biggestWinItemName = "Yok";
+    public float biggestWinProfit = 0f;             // Tek seferde vurulan en büyük kâr
+
+    [Header("Adli & Risk Kayıtları")]
+    public int fakeItemsBoughtCount = 0;     // Yutulan sahte eşya sayısı (Dolandırılma)
+    public int stolenItemsSeizedCount = 0;   // Polise kaptırılan / el konulan çalıntı mal sayısı
+    public int counterfeitExposedCount = 0;  // Oyuncunun yüzüne vurup yakaladığı sahtekarlıklar
+}
+
+========== 📊 MAĞAZA PERFORMANS RAPORU 📊 ==========
+💰 Toplam Kâr: $42,650
+🏷️ Toplam Satış Adedi: 19 adet
+📈 Ortalama Kâr / İşlem: $2,244
+💎 En Pahalı Satılan: 18K Altın Patek Philippe ($14,500)
+🏆 En Büyük Vurgun: 19. Yüzyıl Yağlıboya Tablo (+$8,200)
+💀 En Büyük Zarar: Elmas Kolye (Polis El Koydu) (-$3,200)
+----------------------------------------------------
+🤡 Yutulan Sahte Eşyalar: 3 adet
+🚨 Polise Kaptırılan Mallar: 1 adet
+====================================================
+
+public enum DayPhase
+{
+    MorningBriefing, // Sabah: Gazete manşeti okunur, piyasa trendleri ve hava durumu görülür
+    ShopOpen,        // Mesai: Müşteriler tezgaha gelir, pazarlıklar ve ekspertizler yapılır
+    EveningLedger,   // Akşam Kasa Kapatma: Günlük gelir/gider tablosu ve istatistik özeti
+    NightSimulation  // Gece / Ekonomi: Sabit dükkan kirası/faturalar kesilir, çalıntı mal ısısı artar
+}
+
+using System;
+using System.Collections;
+using UnityEngine;
+
+public class DaySystem : MonoBehaviour
+{
+    public static DaySystem Instance { get; private set; }
+
+    [Header("Zaman Ayarları")]
+    public int currentDay = 1;
+    public DayPhase currentPhase = DayPhase.MorningBriefing;
+
+    [Header("Günlük Sabit Giderler")]
+    public float dailyShopRent = 150f;      // Dükkan günlük kirası
+    public float dailyUtilities = 50f;      // Elektrik, su, alarm faturası
+
+    // Olay Bildirimleri (UI panellerini tetiklemek için)
+    public event Action<int, DayPhase> OnPhaseChanged;
+    public event Action<int> OnNewDayStarted;
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+    }
+
+    private void Start()
+    {
+        // Oyunu 1. Günün Sabahıyla Başlat
+        StartCoroutine(ExecuteDayCycle(currentDay));
+    }
+
+    /// <summary>
+    /// Günün 4 evresini sırasıyla işleten ana döngü.
+    /// </summary>
+    public void AdvancePhase()
+    {
+        switch (currentPhase)
+        {
+            case DayPhase.MorningBriefing:
+                // Sabah bülteni bitti, kepenkleri aç
+                SetPhase(DayPhase.ShopOpen);
+                break;
+
+            case DayPhase.ShopOpen:
+                // Gelen son müşteri de gitti, kasayı kapat
+                SetPhase(DayPhase.EveningLedger);
+                break;
+
+            case DayPhase.EveningLedger:
+                // Oyuncu hesap özetini onayladı, gece simülasyonunu çalıştır
+                SetPhase(DayPhase.NightSimulation);
+                break;
+
+            case DayPhase.NightSimulation:
+                // Yeni güne geç
+                currentDay++;
+                StartCoroutine(ExecuteDayCycle(currentDay));
+                break;
+        }
+    }
+
+    private void SetPhase(DayPhase newPhase)
+    {
+        currentPhase = newPhase;
+        Debug.Log($"<color=yellow>⏰ [FAZ DEĞİŞTİ]:</color> Gün {currentDay} -> <b>{currentPhase}</b>");
+        OnPhaseChanged?.Invoke(currentDay, currentPhase);
+
+        // Gece fazına geçildiyse arka plan hesaplarını yapıp doğrudan yeni güne bağla
+        if (currentPhase == DayPhase.NightSimulation)
+        {
+            ProcessNightCalculations();
+            AdvancePhase(); // Yeni sabahı başlat
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // GÜNÜN EVRE İŞLEMLERİ (SYSTEM ORCHESTRATION)
+    // -----------------------------------------------------------------
+
+    private IEnumerator ExecuteDayCycle(int day)
+    {
+        yield return null;
+
+        currentPhase = DayPhase.MorningBriefing;
+        Debug.Log($"<color=cyan>══════════════════ 🌅 GÜN {day} BAŞLADI 🌅 ══════════════════</color>");
+        OnNewDayStarted?.Invoke(day);
+
+        // 1. SABAH: Piyasa, Gazete ve Rastgele Olayları Güncelle
+        if (MarketSystem.Instance != null) MarketSystem.Instance.AdvanceToNextDay();
+        if (NewsSystem.Instance != null) NewsSystem.Instance.PublishMorningNews(day);
+        if (RandomEventSystem.Instance != null) RandomEventSystem.Instance.CheckForDailyEvent(day);
+        if (PoliceSystem.Instance != null) PoliceSystem.Instance.EvaluateDailyPoliceVisit(day);
+
+        OnPhaseChanged?.Invoke(day, currentPhase);
+    }
+
+    /// <summary>
+    /// Dükkan kepenkleri açıldığında müşteri akışını başlatır.
+    /// </summary>
+    public void OpenShopForCustomers()
+    {
+        if (currentPhase != DayPhase.MorningBriefing) return;
+        AdvancePhase(); // ShopOpen fazına geçer
+        
+        // Müşteri havuzu bugünkü kuyruğu oluşturur (İtibara göre müşteri sayısı)
+        int customerQuota = ReputationSystem.Instance != null 
+            ? ReputationSystem.Instance.GetDailyCustomerCount() 
+            : 5;
+
+        Debug.Log($"<color=green>[KEPENKLER AÇILDI]:</color> Bugün dükkana {customerQuota} müşteri uğrayacak.");
+    }
+
+    /// <summary>
+    /// Gece dükkan kapalıyken arka planda dönen ekonomi ve risk hesapları.
+    /// </summary>
+    private void ProcessNightCalculations()
+    {
+        Debug.Log("<color=grey>[GECE HESAPLARI]: Sabit giderler ve adli riskler işletiliyor...</color>");
+
+        // 1. Sabit Giderleri Kasadan Düş (Kira + Fatura)
+        float totalBills = dailyShopRent + dailyUtilities;
+        PawnGameManager.Instance.playerCash -= totalBills;
+        Debug.Log($"Kira ve faturalar ödendi: -${totalBills:N0} (Kalan Nakit: ${PawnGameManager.Instance.playerCash:N0})");
+
+        // 2. Çalıntı Eşya Polis Isısını Artır
+        if (StolenItemSystem.Instance != null)
+        {
+            StolenItemSystem.Instance.ProcessDailyStolenHeat();
+        }
+
+        // 3. İflas Kontrolü
+        if (PawnGameManager.Instance.playerCash < -1000f)
+        {
+            Debug.LogError("<color=red>💀 [İFLAS]: Dükkan borçlarını ödeyemedi ve mühürlendi! GAME OVER.</color>");
+        }
+    }
+}
+
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+[System.Serializable]
+public class DailyLedgerReport
+{
+    public int dayNumber;
+
+    [Header("Mali Durum (Ledger)")]
+    public float totalRevenue = 0f;       // Günlük satış cirosu (Gelir)
+    public float totalItemExpenses = 0f;  // Satın alınan eşyalara ödenen para (Gider)
+    public float fixedCosts = 200f;       // Kira + Faturalar + Maaşlar (Sabit Gider)
+    public float netProfit = 0f;          // Net Kâr / Zarar (Gelir - Giderler)
+    public float cashBalanceAtClose = 0f; // Kasa Kapanış Bakiyesi
+
+    [Header("Operasyonel Detaylar")]
+    public int itemsBoughtCount = 0;      // Satın alınan eşya adedi
+    public int itemsSoldCount = 0;       // Satılan eşya adedi
+    public int seizedItemsCount = 0;      // Polise kaptırılan eşya adedi
+    public int expectedCustomersTomorrow = 0; // Yarın dükkâna gelecek müşteri sayısı
+
+    [Header("Yarının Hazırlığı")]
+    public string tomorrowNewsHeadline = "";
+    public string topMarketTrendSummary = "";
+}
+
