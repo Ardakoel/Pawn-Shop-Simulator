@@ -1,0 +1,584 @@
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+[System.Serializable]
+public class ShopLevelConfig
+{
+    public int level;
+    public string levelName;
+    public float upgradeCost;
+    public int vitrineSlotCount;
+    public int warehouseCapacity;
+    public bool hasAppraisalDesk;
+    public bool hasSecurityCamera;
+    public bool hasAutomatedStaff;
+    public bool hasAuctionHouse;
+    [TextArea(2, 3)]
+    public string unlockDescription;
+}
+
+public class ShopUpgradeSystem : MonoBehaviour
+{
+    public static ShopUpgradeSystem Instance { get; private set; }
+
+    [Header("Mevcut Seviye Durumu")]
+    public int currentShopLevel = 1;
+    [SerializeField] private List<ShopLevelConfig> levelConfigs = new List<ShopLevelConfig>();
+
+    public event Action<ShopLevelConfig> OnShopUpgraded;
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+
+        InitializeLevelConfigs();
+    }
+
+    private void InitializeLevelConfigs()
+    {
+        levelConfigs = new List<ShopLevelConfig>
+        {
+            new ShopLevelConfig
+            {
+                level = 1,
+                levelName = "Köhne Arka Sokak Dükkânı",
+                upgradeCost = 0f,
+                vitrineSlotCount = 3,
+                warehouseCapacity = 15,
+                hasAppraisalDesk = false,
+                hasSecurityCamera = false,
+                hasAutomatedStaff = false,
+                hasAuctionHouse = false,
+                unlockDescription = "3 vitrin yeri, düşük müşteri trafiği, temel depo."
+            },
+            new ShopLevelConfig
+            {
+                level = 2,
+                levelName = "Mahalle Rehin Dükkânı",
+                upgradeCost = 5000f,
+                vitrineSlotCount = 6,
+                warehouseCapacity = 30,
+                hasAppraisalDesk = true,
+                hasSecurityCamera = false,
+                hasAutomatedStaff = false,
+                hasAuctionHouse = false,
+                unlockDescription = "6 vitrin yeri, arka odada Ekspertiz Tezgâhı (büyüteç, mihenk taşı)."
+            },
+            new ShopLevelConfig
+            {
+                level = 3,
+                levelName = "Güvenlikli Ticaret Merkezi",
+                upgradeCost = 15000f,
+                vitrineSlotCount = 10,
+                warehouseCapacity = 60,
+                hasAppraisalDesk = true,
+                hasSecurityCamera = true,
+                hasAutomatedStaff = false,
+                hasAuctionHouse = false,
+                unlockDescription = "Güvenlik Kamerası (hırsızlık riskini ve hasarını %60 düşürür), genişletilmiş depo."
+            },
+            new ShopLevelConfig
+            {
+                level = 4,
+                levelName = "Kurumsal Rehin Mağazası",
+                upgradeCost = 35000f,
+                vitrineSlotCount = 15,
+                warehouseCapacity = 100,
+                hasAppraisalDesk = true,
+                hasSecurityCamera = true,
+                hasAutomatedStaff = true,
+                hasAuctionHouse = false,
+                unlockDescription = "Müdür & tezgâhtar çalıştırma imkânı, başka bölgelerde şube açma yetkisi."
+            },
+            new ShopLevelConfig
+            {
+                level = 5,
+                levelName = "Elit Müzayede & Galeri",
+                upgradeCost = 80000f,
+                vitrineSlotCount = 25,
+                warehouseCapacity = 200,
+                hasAppraisalDesk = true,
+                hasSecurityCamera = true,
+                hasAutomatedStaff = true,
+                hasAuctionHouse = true,
+                unlockDescription = "Haftalık Açık Artırma (Müzayede) salonu, zengin koleksiyoner kuyruğu."
+            }
+        };
+    }
+
+    public ShopLevelConfig GetCurrentConfig() => levelConfigs.Find(c => c.level == currentShopLevel);
+
+    public bool TryUpgradeShop()
+    {
+        if (currentShopLevel >= levelConfigs.Count)
+        {
+            Debug.LogWarning("Dükkân zaten maksimum seviyede!");
+            return false;
+        }
+
+        ShopLevelConfig nextConfig = levelConfigs.Find(c => c.level == currentShopLevel + 1);
+        if (PawnGameManager.Instance.playerCash < nextConfig.upgradeCost)
+        {
+            Debug.LogWarning($"Yetersiz Bakiye! Geliştirme için ${nextConfig.upgradeCost:N0} gerekiyor.");
+            return false;
+        }
+
+        PawnGameManager.Instance.playerCash -= nextConfig.upgradeCost;
+        currentShopLevel = nextConfig.level;
+
+        ApplyUpgradesToGame(nextConfig);
+
+        Debug.Log($"<color=yellow>🎉 [DÜKKÂN SEVİYE ATLADI]: {nextConfig.levelName} (Seviye {nextConfig.level})!</color>");
+        OnShopUpgraded?.Invoke(nextConfig);
+        return true;
+    }
+
+    private void ApplyUpgradesToGame(ShopLevelConfig cfg)
+    {
+        if (InventorySystem.Instance != null)
+        {
+            InventorySystem.Instance.maxCapacity = cfg.warehouseCapacity;
+        }
+    }
+}
+
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+[System.Serializable]
+public class BranchEmployee
+{
+    public string employeeID;
+    public string employeeName;
+    [Range(1, 10)] public int appraisalSkill; // Eşyanın sahtesini anlama yeteneği
+    [Range(1, 10)] public int hagglingSkill;  // Ucuza alıp pahalıya satma yeteneği
+    public float dailySalary;                 // Günlük yevmiye
+    public float totalProfitGenerated;        // Bu elemanın bize kazandırdığı toplam net kâr/zarar
+
+    public BranchEmployee(string name, int appSkill, int hagSkill, float salary)
+    {
+        employeeID = Guid.NewGuid().ToString().Substring(0, 6);
+        employeeName = name;
+        appraisalSkill = appSkill;
+        hagglingSkill = hagSkill;
+        dailySalary = salary;
+        totalProfitGenerated = 0f;
+    }
+}
+
+[System.Serializable]
+public class PawnBranchShop
+{
+    public string branchID;
+    public string locationName;          // Örn: "Queens Şubesi", "Brooklyn Bayisi", "Harlem Rehin"
+    public float dailyRent;              // Şubenin sabit dükkân kirası
+    public BranchEmployee manager;       // Dükkânı yöneten çalışan (Yoksa çalışmaz)
+    public float currentCapital;         // Şubenin al-sat için kullandığı kasa sermayesi
+    public float cumulativeProfit;       // Şubenin kurulduğundan beri getirdiği net kâr/zarar
+    public float yesterdayResult;        // Dünkü kâr veya zarar rakamı
+
+    public bool HasManager => manager != null;
+}
+
+public class BranchEmpireSystem : MonoBehaviour
+{
+    public static BranchEmpireSystem Instance { get; private set; }
+
+    [Header("Aktif Şubeler & Personel")]
+    public List<PawnBranchShop> activeBranches = new List<PawnBranchShop>();
+    public List<BranchEmployee> availableJobSeekers = new List<BranchEmployee>(); // İşe alınabilecek aday havuzu
+
+    public event Action OnEmpireUpdated;
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+
+        GenerateJobMarketCandidates();
+    }
+
+    /// <summary>
+    /// Gazeteye/ilanlara iş arayan yeni personeller düşürür.
+    /// </summary>
+    public void GenerateJobMarketCandidates()
+    {
+        availableJobSeekers.Clear();
+        availableJobSeekers.Add(new BranchEmployee("Marcus Vance", 8, 7, 280f));
+        availableJobSeekers.Add(new BranchEmployee("Chloe Zhao", 9, 5, 250f));
+        availableJobSeekers.Add(new BranchEmployee("Dmitri Petrov", 4, 8, 200f));
+        availableJobSeekers.Add(new BranchEmployee("Jimmy 'Çaylak' Fallon", 2, 3, 90f));
+    }
+
+    /// <summary>
+    /// Yeni bir bölgede şube açar.
+    /// </summary>
+    public bool OpenNewBranch(string location, float upfrontCost, float dailyRent, float startingCapital)
+    {
+        if (ShopUpgradeSystem.Instance.currentShopLevel < 4)
+        {
+            Debug.LogWarning("Şube açabilmek için ana dükkânın en az Level 4 (Kurumsal) olması gerekir!");
+            return false;
+        }
+
+        if (PawnGameManager.Instance.playerCash < (upfrontCost + startingCapital))
+        {
+            Debug.LogWarning("Yeni şube açmak ve kasasına sermaye koymak için yeterli paran yok!");
+            return false;
+        }
+
+        PawnGameManager.Instance.playerCash -= (upfrontCost + startingCapital);
+
+        PawnBranchShop branch = new PawnBranchShop
+        {
+            branchID = Guid.NewGuid().ToString().Substring(0, 6),
+            locationName = location,
+            dailyRent = dailyRent,
+            currentCapital = startingCapital,
+            cumulativeProfit = 0f,
+            manager = null
+        };
+
+        activeBranches.Add(branch);
+        Debug.Log($"<color=green>🏢 [YENİ ŞUBE AÇILDI]:</color> {location}! Şimdi buraya bir müdür atamalısın.");
+        OnEmpireUpdated?.Invoke();
+        return true;
+    }
+
+    /// <summary>
+    /// Boş şubeye işe alım yapar (ETS 2 tarzı personele dükkân teslim etme).
+    /// </summary>
+    public bool HireEmployeeToBranch(string branchID, BranchEmployee candidate)
+    {
+        var branch = activeBranches.Find(b => b.branchID == branchID);
+        if (branch == null || branch.HasManager) return false;
+
+        branch.manager = candidate;
+        availableJobSeekers.Remove(candidate);
+
+        Debug.Log($"<color=cyan>[İŞE ALINDI]:</color> {candidate.employeeName}, {branch.locationName} müdürü olarak işe başladı.");
+        OnEmpireUpdated?.Invoke();
+        return true;
+    }
+
+    /// <summary>
+    /// Personeli kovar (ETS 2 Dismiss).
+    /// </summary>
+    public void FireEmployee(string branchID)
+    {
+        var branch = activeBranches.Find(b => b.branchID == branchID);
+        if (branch == null || !branch.HasManager) return;
+
+        Debug.Log($"<color=red>[KOVULDU]:</color> {branch.manager.employeeName}, {branch.locationName} görevinden kovuldu!");
+        branch.manager = null;
+        OnEmpireUpdated?.Invoke();
+    }
+
+    /// <summary>
+    /// Zarar eden veya istenmeyen şubeyi tamamen kapatır (Tasfiye).
+    /// </summary>
+    public void CloseBranch(string branchID)
+    {
+        var branch = activeBranches.Find(b => b.branchID == branchID);
+        if (branch == null) return;
+
+        // Kalan sermayeyi ana kasaya iade et
+        PawnGameManager.Instance.playerCash += Mathf.Max(0f, branch.currentCapital);
+
+        if (branch.HasManager)
+        {
+            availableJobSeekers.Add(branch.manager); // Eleman işsizler havuzuna döner
+        }
+
+        activeBranches.Remove(branch);
+        Debug.Log($"<color=grey>[ŞUBE KAPATILDI]:</color> {branch.locationName} feshedildi. Kalan sermaye (${branch.currentCapital:N0}) ana kasaya aktarıldı.");
+        OnEmpireUpdated?.Invoke();
+    }
+
+    // -----------------------------------------------------------------
+    // GECE SİMÜLASYONU: ŞUBELERİN OTOMATİK TİCARETİ VE KÂR/ZARAR DÖKÜMÜ
+    // -----------------------------------------------------------------
+    /// <summary>
+    /// Her gece DaySystem.NightSimulation sırasında şubelerin günlük al-satını işletir.
+    /// </summary>
+    public void SimulateBranchesNightPerformance()
+    {
+        foreach (var branch in activeBranches)
+        {
+            // Eleman yoksa şube kepenk kapatır, sadece kira öder
+            if (!branch.HasManager)
+            {
+                branch.currentCapital -= branch.dailyRent;
+                branch.yesterdayResult = -branch.dailyRent;
+                branch.cumulativeProfit -= branch.dailyRent;
+                Debug.Log($"<color=orange>[{branch.locationName}]:</color> Müdür olmadığı için çalışmadı. Kira zararı: -${branch.dailyRent:N0}");
+                continue;
+            }
+
+            BranchEmployee emp = branch.manager;
+
+            // 1. Maliyetler: Şube Kirası + Eleman Maaşı
+            float dailyExpenses = branch.dailyRent + emp.dailySalary;
+
+            // 2. Performans Çarpanı (ETS 2 Zar Formülü)
+            // HagglingSkill kâr marjını belirler, AppraisalSkill sahte mala düşmeme şansını belirler.
+            float tradeBaseVolume = UnityEngine.Random.Range(1000f, 3500f);
+            float profitMargin = Mathf.Lerp(-0.25f, 0.45f, (emp.hagglingSkill + emp.appraisalSkill) / 20f);
+
+            // Çaylak eleman (%20 ihtimalle sahte mal alır ve içeri girer)
+            if (emp.appraisalSkill < 5 && UnityEngine.Random.value < 0.25f)
+            {
+                profitMargin -= 0.40f; // Sahte mal yutma cezası
+                Debug.LogWarning($"[{branch.locationName}]: {emp.employeeName} sahte bir antika satın alarak dükkânı zarara soktu!");
+            }
+
+            float grossDailyProfit = tradeBaseVolume * profitMargin;
+            float netDailyProfit = grossDailyProfit - dailyExpenses;
+
+            // Kasaya ve istatistiklere işle
+            branch.currentCapital += netDailyProfit;
+            branch.cumulativeProfit += netDailyProfit;
+            branch.yesterdayResult = netDailyProfit;
+            emp.totalProfitGenerated += netDailyProfit;
+
+            string color = netDailyProfit >= 0 ? "green" : "red";
+            string sign = netDailyProfit >= 0 ? "+" : "";
+            Debug.Log($"<color={color}>[{branch.locationName} RAPORU]: Müdür: {emp.employeeName} | Net Bilanço: {sign}${netDailyProfit:N0} (Kasa: ${branch.currentCapital:N0})</color>");
+
+            // Kasa sıfırın altına inerse oyuncunun ana kasasından sübvanse edilir
+            if (branch.currentCapital < 0)
+            {
+                PawnGameManager.Instance.playerCash += branch.currentCapital; // Açığı ana kasadan çek
+                branch.currentCapital = 0f;
+                Debug.LogWarning($"<color=red>⚠️ [{branch.locationName}] battı! Açık ana kasadan karşılandı. İster kov ister şubeyi kapat!</color>");
+            }
+            // Kasa çok şişerse fazlalık kârı ana kasaya aktar (Temettü)
+            else if (branch.currentCapital > 15000f)
+            {
+                float dividend = branch.currentCapital - 10000f;
+                branch.currentCapital = 10000f;
+                PawnGameManager.Instance.playerCash += dividend;
+                Debug.Log($"<color=green>💰 [{branch.locationName}] kâr payı aktardı: +${dividend:N0} ana kasaya eklendi.</color>");
+            }
+        }
+
+        OnEmpireUpdated?.Invoke();
+    }
+}
+
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+[System.Serializable]
+public class CollectionItemRequirement
+{
+    public string targetTemplateID; // Gerekli eşya ID'si (Örn: "watch_rolex_1968")
+    public string displayName;      // UI'da görünecek ad (Örn: "1968 Submariner")
+    public bool isRegistered;       // Oyuncu bu parçayı koleksiyona kilitledi mi?
+    public string registeredItemID; // Kilitlenen envanter parçasının UniqueID'si
+}
+
+[System.Serializable]
+public class CollectionSet
+{
+    public string setID;
+    public string setName;
+    public ItemCategory category;
+    [TextArea(2, 3)]
+    public string description;
+
+    [Header("Gereksinimler")]
+    public List<CollectionItemRequirement> requirements = new List<CollectionItemRequirement>();
+
+    [Header("Tamamlama Ödülleri")]
+    public float completionCashBonus;      // Nakit para ödülü
+    public float permanentReputationBonus; // Kalıcı itibar artışı
+    public string completionPerkName;      // Kazanılan pasif yetenek/unvan
+    public bool isCompleted;
+
+    public int RegisteredCount => requirements.FindAll(r => r.isRegistered).Count;
+    public int TotalRequired => requirements.Count;
+    public float ProgressPercentage => (float)RegisteredCount / TotalRequired * 100f;
+}
+
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+public class CollectionSystem : MonoBehaviour
+{
+    public static CollectionSystem Instance { get; private set; }
+
+    [Header("Aktif Koleksiyon Setleri")]
+    [SerializeField] private List<CollectionSet> collectionSets = new List<CollectionSet>();
+
+    // Olay Bildirimleri
+    public event Action<CollectionSet> OnCollectionCompleted;
+    public event Action<CollectionSet, CollectionItemRequirement> OnItemAddedToCollection;
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+
+        InitializeDefaultCollections();
+    }
+
+    /// <summary>
+    /// Varsayılan 4 ana tematik koleksiyonu tanımlar.
+    /// </summary>
+    private void InitializeDefaultCollections()
+    {
+        collectionSets = new List<CollectionSet>
+        {
+            // 1. VINTAGE WATCHES
+            new CollectionSet
+            {
+                setID = "set_watches",
+                setName = "Altın Çağ Saatleri (Vintage Watches)",
+                category = ItemCategory.Watch,
+                description = "20. yüzyılın en ikonik mekanik kronograflarını ve lüks saatlerini toplayın.",
+                completionCashBonus = 12000f,
+                permanentReputationBonus = 15f,
+                completionPerkName = "Zamanın Efendisi: Tüm saat satışlarında +%10 kalıcı kâr.",
+                requirements = new List<CollectionItemRequirement>
+                {
+                    new CollectionItemRequirement { targetTemplateID = "watch_rolex_1968", displayName = "1968 Vintage Chrono" },
+                    new CollectionItemRequirement { targetTemplateID = "watch_omega_moon", displayName = "1969 Speedmaster" },
+                    new CollectionItemRequirement { targetTemplateID = "watch_cartier_tank", displayName = "Klasik Altın Tank Saat" }
+                }
+            },
+
+            // 2. OLD CAMERAS
+            new CollectionSet
+            {
+                setID = "set_cameras",
+                setName = "Analog Nostalji (Old Cameras)",
+                category = ItemCategory.Electronics,
+                description = "Tarihin dönüm noktalarına tanıklık etmiş mekanik vizörlü analog makineler.",
+                completionCashBonus = 7500f,
+                permanentReputationBonus = 10f,
+                completionPerkName = "Keskin Vizör: Müşterilerin yalan söyleme ipuçları %25 daha belirgin hale gelir.",
+                requirements = new List<CollectionItemRequirement>
+                {
+                    new CollectionItemRequirement { targetTemplateID = "cam_leica_m3", displayName = "1954 Leica Telemetre" },
+                    new CollectionItemRequirement { targetTemplateID = "cam_hasselblad_500", displayName = "Orta Format Stüdyo Makinesi" },
+                    new CollectionItemRequirement { targetTemplateID = "cam_polaroid_sx70", displayName = "Klasik Katlanır Polaroid" }
+                }
+            },
+
+            // 3. COINS
+            new CollectionSet
+            {
+                setID = "set_coins",
+                setName = "Tarihi Sikkeler (Coins of the Century)",
+                category = ItemCategory.Coin,
+                description = "Nadir darphane hatalı ve saf altından basılmış tarihi madeni paralar.",
+                completionCashBonus = 15000f,
+                permanentReputationBonus = 20f,
+                completionPerkName = "Midas Dokunuşu: Günlük dükkan sabit giderleri (kira/fatura) %15 azalır.",
+                requirements = new List<CollectionItemRequirement>
+                {
+                    new CollectionItemRequirement { targetTemplateID = "coin_double_eagle_1933", displayName = "1933 Çift Kartal Altın Sikke" },
+                    new CollectionItemRequirement { targetTemplateID = "coin_morgan_silver_1889", displayName = "1889 CC Morgan Gümüş Dolar" },
+                    new CollectionItemRequirement { targetTemplateID = "coin_roman_denarius", displayName = "Antik Roma Gümüş Denarius" }
+                }
+            },
+
+            // 4. PAINTINGS
+            new CollectionSet
+            {
+                setID = "set_paintings",
+                setName = "Usta Fırçalar (Rare Paintings)",
+                category = ItemCategory.Painting,
+                description = "Müzayedelerin gözdesi olan orijinal yağlıboya tablolar.",
+                completionCashBonus = 25000f,
+                permanentReputationBonus = 25f,
+                completionPerkName = "Koleksiyoner Cazibesi: Açık artırmalarda zengin alıcı gelme ihtimali iki katına çıkar.",
+                requirements = new List<CollectionItemRequirement>
+                {
+                    new CollectionItemRequirement { targetTemplateID = "paint_dutch_portrait", displayName = "17. Yüzyıl Hollanda Portresi" },
+                    new CollectionItemRequirement { targetTemplateID = "paint_impressionist_garden", displayName = "Empresyonist Bahçe Manzarası" },
+                    new CollectionItemRequirement { targetTemplateID = "paint_modern_abstract", displayName = "Ekspresyonist Orijinal Tuval" }
+                }
+            }
+        };
+    }
+
+    /// <summary>
+    /// Envanterdeki bir eşyayı koleksiyon setine kilitler.
+    /// Eşya orijinal olmalıdır; sahte veya replika eşyalar koleksiyona kabul edilmez.
+    /// </summary>
+    public bool RegisterItemToCollection(InventoryItem item, string setID)
+    {
+        // 1. Orijinallik Filtresi
+        if (item.authenticity != AuthenticityType.Authentic)
+        {
+            Debug.LogWarning("<color=red>[KOLEKSİYON REDDİ]:</color> Sahte veya parçası değiştirilmiş eşyalar koleksiyon vitrinine konulamaz!");
+            return false;
+        }
+
+        CollectionSet targetSet = collectionSets.Find(s => s.setID == setID);
+        if (targetSet == null || targetSet.isCompleted) return false;
+
+        // 2. Eşleşen boş gereksinimi bul
+        CollectionItemRequirement req = targetSet.requirements.Find(r => r.targetTemplateID == item.itemTemplateID && !r.isRegistered);
+
+        if (req != null)
+        {
+            req.isRegistered = true;
+            req.registeredItemID = item.uniqueID;
+
+            // Eşyayı normal satış envanterinden çıkarıp koleksiyon albümüne kilitle
+            InventorySystem.Instance.RemoveItem(item.uniqueID);
+
+            Debug.Log($"<color=green>[KOLEKSİYONA EKLENDİ]:</color> {item.itemName} -> {targetSet.setName} (%{targetSet.ProgressPercentage:0})");
+            OnItemAddedToCollection?.Invoke(targetSet, req);
+
+            // Tamamlanma Kontrolü
+            CheckSetCompletion(targetSet);
+            return true;
+        }
+
+        Debug.LogWarning("Bu eşya seçilen koleksiyonun aranan parçaları arasında bulunmuyor.");
+        return false;
+    }
+
+    /// <summary>
+    /// Setin tamamlanıp tamamlanmadığını kontrol eder ve ödülleri dağıtır.
+    /// </summary>
+    private void CheckSetCompletion(CollectionSet set)
+    {
+        if (set.RegisteredCount == set.TotalRequired && !set.isCompleted)
+        {
+            set.isCompleted = true;
+
+            // 1. Para Ödülü
+            if (PawnGameManager.Instance != null)
+            {
+                PawnGameManager.Instance.playerCash += set.completionCashBonus;
+            }
+
+            // 2. İtibar Ödülü
+            if (ReputationSystem.Instance != null)
+            {
+                ReputationSystem.Instance.customerTrust = Mathf.Clamp(ReputationSystem.Instance.customerTrust + set.permanentReputationBonus, 0f, 100f);
+                ReputationSystem.Instance.marketReputation = Mathf.Clamp(ReputationSystem.Instance.marketReputation + set.permanentReputationBonus, 0f, 100f);
+            }
+
+            Debug.Log($"<color=gold>🏆🏆🏆 [KOLEKSİYON TAMAMLANDI!] 🏆🏆🏆\n" +
+                      $"{set.setName} tamamlandı!\n" +
+                      $"Ödül: +${set.completionCashBonus:N0} Nakit | +{set.permanentReputationBonus} İtibar\n" +
+                      $"Pasif Yetenek Açıldı: {set.completionPerkName}</color>");
+
+            OnCollectionCompleted?.Invoke(set);
+        }
+    }
+
+    public List<CollectionSet> GetAllSets() => collectionSets;
+}
+
