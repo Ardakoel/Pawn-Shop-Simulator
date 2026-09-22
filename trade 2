@@ -1,0 +1,261 @@
+using UnityEngine;
+
+public enum OfferDecision
+{
+    Accept,         // Teklifi kabul etti, el sıkışıldı
+    CounterOffer,   // Teklifi az buldu ama pazarlığa devam edip indirim yaptı
+    Reject,         // Teklifi kesinlikle reddetti (Karşı teklif yok, oyuncu artırmalı)
+    Leave           // Hakaret saydı veya sabrı bitti, masayı terk etti
+}
+
+public struct OfferEvaluationResult
+{
+    public OfferDecision decision;
+    public float newCustomerOffer;   // Karşı teklif durumunda istenen yeni fiyat
+    public float acceptanceChance;    // Hesaplanan kabul ihtimali (0 - 100)
+    public string rationaleDialogue; // Müşterinin kararını açıklayan replik
+}
+
+public static class OfferEvaluator
+{
+    /// <summary>
+    /// Oyuncunun teklifini müşterinin psikolojik profiline göre değerlendirir.
+    /// </summary>
+    public static OfferEvaluationResult EvaluateOffer(
+        float playerOffer,
+        float currentCustomerAskingPrice,
+        float customerMinimumPrice,
+        float currentPatience,
+        CustomerTraits traits)
+    {
+        OfferEvaluationResult result = new OfferEvaluationResult();
+
+        // -----------------------------------------------------------------
+        // 1. KONTROL: Sabır Tükendi mi?
+        // -----------------------------------------------------------------
+        if (currentPatience <= 0)
+        {
+            result.decision = OfferDecision.Leave;
+            result.newCustomerOffer = currentCustomerAskingPrice;
+            result.rationaleDialogue = "Sabrım tamamen tükendi. Seninle bir yere varamayacağız, gidiyorum.";
+            return result;
+        }
+
+        // -----------------------------------------------------------------
+        // 2. KONTROL: Teklif İstenen Fiyata Eşit veya Üstünde mi?
+        // -----------------------------------------------------------------
+        if (playerOffer >= currentCustomerAskingPrice)
+        {
+            result.decision = OfferDecision.Accept;
+            result.newCustomerOffer = playerOffer;
+            result.acceptanceChance = 100f;
+            result.rationaleDialogue = "Teklifiniz tam istediğim gibi. El sıkışalım!";
+            return result;
+        }
+
+        // -----------------------------------------------------------------
+        // 3. KONTROL: Hakaret Düzeyinde Düşük Teklif (Lowball -> Leave)
+        // -----------------------------------------------------------------
+        float floorRatio = playerOffer / customerMinimumPrice; // Örn: $400 / $1000 = 0.40
+
+        // Gururlu müşteri tabanının %55'inden azına tahammül edemez; çaresiz müşteri %35'e kadar dayanır
+        float insultThreshold = Mathf.Lerp(0.35f, 0.60f, traits.pride / 100f);
+
+        if (floorRatio < insultThreshold)
+        {
+            // Aciliyeti aşırı yüksek değilse doğrudan masayı terk eder
+            if (traits.urgency < 80)
+            {
+                result.decision = OfferDecision.Leave;
+                result.newCustomerOffer = currentCustomerAskingPrice;
+                result.rationaleDialogue = "Sen benim aklımla alay mı ediyorsun?! Bu fiyata günahımı vermem!";
+                return result;
+            }
+            else
+            {
+                // Çok acil paraya ihtiyacı varsa terk etmez ama teklifi sertçe reddeder
+                result.decision = OfferDecision.Reject;
+                result.newCustomerOffer = currentCustomerAskingPrice;
+                result.rationaleDialogue = "Zor durumdayım dediysem malımı bedavaya bırakacak değilim. Düzgün bir para söyle.";
+                return result;
+            }
+        }
+
+        // -----------------------------------------------------------------
+        // 4. KONTROL: Teklif Taban Fiyatın Üstünde mi? (Kabul vs Karşı Teklif)
+        // -----------------------------------------------------------------
+        if (playerOffer >= customerMinimumPrice)
+        {
+            // Kabul Puanı Hesaplama:
+            // Teklif tabanın ne kadar üstünde?
+            float surplusRatio = (playerOffer - customerMinimumPrice) / (currentCustomerAskingPrice - customerMinimumPrice + 0.01f);
+            
+            // Psikolojik Baskılar:
+            // Borç ve aciliyet kabulü kolaylaştırır (+).
+            // Açgözlülük, gurur ve pazarlık becerisi kabulü zorlaştırır (-).
+            float acceptanceScore = (surplusRatio * 50f)
+                                  + (traits.urgency * 0.25f)
+                                  + (traits.debt * 0.25f)
+                                  - (traits.greed * 0.20f)
+                                  - (traits.pride * 0.15f)
+                                  - (traits.hagglingSkill * 0.15f);
+
+            // Sabır azaldıkça müşterinin direnci kırılır
+            if (currentPatience < 30) acceptanceScore += 20f;
+
+            result.acceptanceChance = Mathf.Clamp(acceptanceScore, 0f, 100f);
+
+            // Kabul eşiği: 45 puan üstü kabul eder
+            if (acceptanceScore >= 45f)
+            {
+                result.decision = OfferDecision.Accept;
+                result.newCustomerOffer = playerOffer;
+                result.rationaleDialogue = (traits.urgency > 60 || traits.debt > 60)
+                    ? "Normalde bırakmazdım ama nakite çok sıkıştım. Kabul ediyorum, parayı ver."
+                    : "Makul bir noktaya geldik. Anlaştık, hayrını gör.";
+                return result;
+            }
+        }
+
+        // -----------------------------------------------------------------
+        // 5. DURUM: Karşı Teklif (Counter-Offer) Oluşturma
+        // -----------------------------------------------------------------
+        // Müşteri başlangıç fiyatından tabana doğru bir adım atar.
+        // İndirim adımını belirleyenler:
+        // - Urgency ve Debt yüksekse büyük adımlarla iner.
+        // - HagglingSkill ve Greed yüksekse indirimi frenler (küçük adımlar atar).
+        
+        float priceGap = currentCustomerAskingPrice - customerMinimumPrice;
+
+        float dropFactor = 0.20f 
+                         + (traits.urgency * 0.0025f) 
+                         + (traits.debt * 0.0020f) 
+                         - (traits.hagglingSkill * 0.0020f) 
+                         - (traits.greed * 0.0015f);
+
+        dropFactor = Mathf.Clamp(dropFactor, 0.10f, 0.45f);
+
+        float calculatedOffer = currentCustomerAskingPrice - (priceGap * dropFactor);
+        calculatedOffer = Mathf.Max(calculatedOffer, customerMinimumPrice);
+
+        // Fiyatı düzgün tamsayıya yuvarla
+        result.newCustomerOffer = Mathf.Round(calculatedOffer / 5f) * 5f;
+        result.decision = OfferDecision.CounterOffer;
+
+        // Son fiyat sınırına geldiyse
+        if (Mathf.Abs(result.newCustomerOffer - customerMinimumPrice) <= (customerMinimumPrice * 0.05f))
+        {
+            result.newCustomerOffer = customerMinimumPrice;
+            result.rationaleDialogue = $"Daha aşağı inemem, son fiyatım ${result.newCustomerOffer:N0}. İşine gelirse.";
+        }
+        else
+        {
+            result.rationaleDialogue = $"Verdiğin rakam çok düşük. Senin için ${result.newCustomerOffer:N0} seviyesine inebilirim.";
+        }
+
+        return result;
+    }
+}
+
+public enum DealTwistType
+{
+    None,              // Temiz anlaşma: Tereddütsüz el sıkışıldı
+    LastSecondGreed,   // Açgözlülük: "Bir dakika... $50-$100 daha verir misin?"
+    EmotionalBackout,  // Duygusal Kriz: "Yok yapamayacağım, hatırası çok büyük, vazgeçtim!"
+    SecondThoughts,    // Şüphe/Tereddüt: "Çok mu ucuza verdim acaba? Biraz düşünmem lazım."
+    GuiltReliefBonus   // Tersine Sürpriz: Çaresiz müşteri çok sevinir, fiyatı $20-$30 daha kırar!
+}
+
+using UnityEngine;
+
+public struct DealTwistResult
+{
+    public DealTwistType twistType;
+    public float modifiedPrice;      // İstenen yeni fiyat (Örn: +$100)
+    public bool dealCancelled;       // Satış tamamen iptal mi oldu?
+    public string twistDialogue;     // Müşterinin söylediği son saniye repliği
+}
+
+public static class DealTwistSystem
+{
+    /// <summary>
+    /// Tam el sıkışılacağı anda (Accept durumu) kritik bir son saniye sürprizi olup olmadığını hesaplar.
+    /// </summary>
+    public static DealTwistResult EvaluateLastSecondTwist(
+        float agreedPrice, 
+        CustomerTraits traits, 
+        float trueMarketValue)
+    {
+        DealTwistResult result = new DealTwistResult
+        {
+            twistType = DealTwistType.None,
+            modifiedPrice = agreedPrice,
+            dealCancelled = false,
+            twistDialogue = "Tamamdır, anlaştık. Parayı sayabilirsiniz."
+        };
+
+        // 1. ZAR ATIMI: Temel sürpriz tetiklenme şansı (%15 taban ihtimal)
+        // Dengesiz karakterlerde bu ihtimal %35'e kadar çıkar
+        float twistChance = 12f;
+        if (traits.itemAttachment > 75) twistChance += 15f;
+        if (traits.greed > 75) twistChance += 10f;
+        if (traits.trustworthiness < 30) twistChance += 10f;
+
+        float roll = Random.Range(0f, 100f);
+        if (roll > twistChance)
+        {
+            return result; // Zar tutmadı, pürüzsüz el sıkışıldı
+        }
+
+        // -------------------------------------------------------------
+        // SÜRPRİZ SENARYOLARI (Karakter Özelliklerine Göre Dağılım)
+        // -------------------------------------------------------------
+
+        // SENARYO 1: Duygusal Çöküş / Ani Vazgeçiş (High Attachment)
+        // Masadan eşyayı kapıp satmaktan vazgeçer
+        if (traits.itemAttachment > 70 && Random.value < 0.40f)
+        {
+            result.twistType = DealTwistType.EmotionalBackout;
+            result.dealCancelled = true;
+            result.twistDialogue = "Bir dakika... Hayır, yapamayacağım! Bu babamın yadigârı, parası batsın! Vazgeçtim, satmıyorum!";
+            return result;
+        }
+
+        // SENARYO 2: Açgözlülük / Son Saniye Koparma (High Greed & Low Trust)
+        // Tam bitti derken ek $50 - $150 ister
+        if (traits.greed > 65 || traits.trustworthiness < 40)
+        {
+            float extraDemand = Mathf.Round(Mathf.Clamp(agreedPrice * 0.10f, 50f, 250f) / 10f) * 10f;
+            result.twistType = DealTwistType.LastSecondGreed;
+            result.modifiedPrice = agreedPrice + extraDemand;
+            result.dealCancelled = false;
+            result.twistDialogue = $"Dur bir saniye... Elini cebine atmışken bir ${extraDemand:N0} daha ateşle de tam olsun. Yoksa içime sinmeyecek.";
+            return result;
+        }
+
+        // SENARYO 3: Şüpheye Düşme / Tereddüt (Low ItemKnowledge & High Pride)
+        // "Acaba beni mi kandırdı?" korkusu
+        if (traits.itemKnowledge < 40 && traits.pride > 60)
+        {
+            result.twistType = DealTwistType.SecondThoughts;
+            result.dealCancelled = true;
+            result.twistDialogue = "Bir dakika... Sen çok kolay kabul ettin. Yoksa bu mal sandığımdan çok daha mı değerli? Ben bunu bir dışarıda soruşturalım, vazgeçtim.";
+            return result;
+        }
+
+        // SENARYO 4: Minnettarlık İndirimi (High Desperation & High Honesty)
+        // Çok rahatlayan müşteri jest yapar
+        if (traits.desperation > 80 && traits.honesty > 65 && agreedPrice > 200f)
+        {
+            float discount = Mathf.Round(Mathf.Clamp(agreedPrice * 0.05f, 20f, 50f));
+            result.twistType = DealTwistType.GuiltReliefBonus;
+            result.modifiedPrice = agreedPrice - discount;
+            result.dealCancelled = false;
+            result.twistDialogue = $"Beni bu dertten kurtardın ya helal olsun. Senden ${discount:N0} az alayım, helalleşelim usta.";
+            return result;
+        }
+
+        return result;
+    }
+}
+
