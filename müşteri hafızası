@@ -167,3 +167,227 @@ public class CustomerMemorySystem : MonoBehaviour
 }
 
 
+public enum RelationshipTier
+{
+    Nemesis,     // Düşman / Nefret Eden (-100 ile -51): Kazıklanmış, kin güdüyor
+    Distrustful, // Şüpheci / Soğuk (-50 ile -16): Geçmişte gerginlik yaşamış
+    Neutral,     // Nötr (-15 ile +15): Sıradan müşteri
+    Friendly,    // Dost / Sempatik (+16 ile +50): Birkaç kez adil ticaret yapmış
+    LoyalPartner // Sadık Müdavim (+51 ile +100): Dükkânın daimi müşterisi
+}
+
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+[System.Serializable]
+public class CustomerRelationshipProfile
+{
+    public string customerName;
+    [Range(-100f, 100f)] public float affinityScore = 0f; // -100 (Nefret) ... 0 (Nötr) ... +100 (Kör Güven)
+    public RelationshipTier currentTier = RelationshipTier.Neutral;
+    public int totalSuccessfulDeals = 0;
+    public int totalFailedDeals = 0;
+
+    public CustomerRelationshipProfile(string name)
+    {
+        customerName = name;
+        affinityScore = 0f;
+        currentTier = RelationshipTier.Neutral;
+    }
+
+    public void UpdateAffinity(float delta)
+    {
+        affinityScore = Mathf.Clamp(affinityScore + delta, -100f, 100f);
+        UpdateTier();
+    }
+
+    private void UpdateTier()
+    {
+        if (affinityScore <= -51f) currentTier = RelationshipTier.Nemesis;
+        else if (affinityScore <= -16f) currentTier = RelationshipTier.Distrustful;
+        else if (affinityScore <= 15f) currentTier = RelationshipTier.Neutral;
+        else if (affinityScore <= 50f) currentTier = RelationshipTier.Friendly;
+        else currentTier = RelationshipTier.LoyalPartner;
+    }
+}
+
+public class CustomerRelationshipSystem : MonoBehaviour
+{
+    public static CustomerRelationshipSystem Instance { get; private set; }
+
+    [SerializeField]
+    private List<CustomerRelationshipProfile> profiles = new List<CustomerRelationshipProfile>();
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+    }
+
+    /// <summary>
+    /// Müşterinin kalıcı ilişki profilini getirir, yoksa yeni açar.
+    /// </summary>
+    public CustomerRelationshipProfile GetOrCreateProfile(string customerName)
+    {
+        var profile = profiles.Find(p => p.customerName.Equals(customerName, StringComparison.OrdinalIgnoreCase));
+        if (profile == null)
+        {
+            profile = new CustomerRelationshipProfile(customerName);
+            profiles.Add(profile);
+        }
+        return profile;
+    }
+
+    // -------------------------------------------------------------------------
+    // TİCARET SONUÇLARINA GÖRE İLİŞKİ PUANI GÜNCELLEME
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Başarılı bir alışveriş sonrası çağrılır.
+    /// </summary>
+    public void RecordTradeSuccess(string customerName, bool wasGenerousOffer)
+    {
+        var profile = GetOrCreateProfile(customerName);
+        profile.totalSuccessfulDeals++;
+
+        // Oyuncu cömert ve adil davrandıysa güven hızla tırmanır
+        float gain = wasGenerousOffer ? 20f : 10f;
+        profile.UpdateAffinity(gain);
+
+        Debug.Log($"<color=green>[İLİŞKİ ARTTI]:</color> {customerName} -> Puan: {profile.affinityScore:F0} ({profile.currentTier})");
+    }
+
+    /// <summary>
+    /// Hakaret düzeyinde düşük teklif veya gergin ayrılık sonrası çağrılır.
+    /// </summary>
+    public void RecordTradeInsult(string customerName, bool caughtScamming = false)
+    {
+        var profile = GetOrCreateProfile(customerName);
+        profile.totalFailedDeals++;
+
+        // Kazıklanmaya çalışıldıysa sert nefret kazanır
+        float penalty = caughtScamming ? -15f : -25f;
+        profile.UpdateAffinity(penalty);
+
+        Debug.Log($"<color=red>[İLİŞKİ DÜŞTÜ]:</color> {customerName} -> Puan: {profile.affinityScore:F0} ({profile.currentTier})");
+    }
+
+    // -------------------------------------------------------------------------
+    // PAZARLIK VE DAVRANIŞ MODİFİYERLERİ (CORE LOOP ETKİSİ)
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Müşterinin açılış fiyatını ilişkisine göre ayarlar.
+    /// Nefret eden adam fiyatı şişirir; sadık müşteri adil başlar.
+    /// </summary>
+    public float ModifyStartingPrice(string customerName, float baseStartingPrice)
+    {
+        var profile = GetOrCreateProfile(customerName);
+
+        switch (profile.currentTier)
+        {
+            case RelationshipTier.Nemesis:
+                // Senden nefret ettiği için %30 kazık fiyatla açar
+                return Mathf.Round(baseStartingPrice * 1.30f);
+
+            case RelationshipTier.Distrustful:
+                return Mathf.Round(baseStartingPrice * 1.15f);
+
+            case RelationshipTier.Friendly:
+                // Bizi sevdiği için açılışı şişirmez
+                return Mathf.Round(baseStartingPrice * 0.95f);
+
+            case RelationshipTier.LoyalPartner:
+                // Sadık dost: Direkt makul piyasa fiyatından açar (%10 indirimli)
+                return Mathf.Round(baseStartingPrice * 0.90f);
+
+            default:
+                return baseStartingPrice;
+        }
+    }
+
+    /// <summary>
+    /// Müşterinin inebileceği en dip fiyat sınırını (Floor Price) esnetir.
+    /// </summary>
+    public float ModifyMinimumFloorPrice(string customerName, float baseFloorPrice)
+    {
+        var profile = GetOrCreateProfile(customerName);
+
+        switch (profile.currentTier)
+        {
+            case RelationshipTier.Nemesis:
+                // Nefret eden müşteri tabanından 1 dolar bile ödün vermez
+                return Mathf.Round(baseFloorPrice * 1.10f);
+
+            case RelationshipTier.LoyalPartner:
+                // Sana güvenen dost, dip fiyatın da %8 altına inmeye razı olur
+                return Mathf.Round(baseFloorPrice * 0.92f);
+
+            default:
+                return baseFloorPrice;
+        }
+    }
+
+    /// <summary>
+    /// Sabır puanına ilişki bonusu veya cezası ekler.
+    /// </summary>
+    public int ModifyPatience(string customerName, int basePatience)
+    {
+        var profile = GetOrCreateProfile(customerName);
+
+        switch (profile.currentTier)
+        {
+            case RelationshipTier.Nemesis:
+                // Düşman müşteri 1-2 kötü teklifte anında patlar (-35 sabır)
+                return Mathf.Max(15, basePatience - 35);
+
+            case RelationshipTier.Distrustful:
+                return Mathf.Max(20, basePatience - 15);
+
+            case RelationshipTier.Friendly:
+                return Mathf.Min(100, basePatience + 15);
+
+            case RelationshipTier.LoyalPartner:
+                // Sadık müşteri seni kırmaz, saatlerce pazarlık yapabilir (+30 sabır)
+                return Mathf.Min(100, basePatience + 30);
+
+            default:
+                return basePatience;
+        }
+    }
+
+    /// <summary>
+    /// Müşterinin ilişki seviyesine göre tezgâha koyduğu tavır cümlesi.
+    /// </summary>
+    public string GetRelationshipDialogue(string customerName)
+    {
+        var profile = GetOrCreateProfile(customerName);
+
+        switch (profile.currentTier)
+        {
+            case RelationshipTier.Nemesis:
+                return "Mecbur kalmasam dükkânının önünden bile geçmezdim. Mal bu, fiyat bu! Tek kuruş aşağı inmem, zoruna gidiyorsa kapı orada.";
+
+            case RelationshipTier.Distrustful:
+                return "Gözüm üzerinde esnaf... Geçen seferki gibi beni ezmeye çalışırsan hiç uzatmadan çeker giderim.";
+
+            case RelationshipTier.Friendly:
+                return "Tekrar selam dostum! Seninle çalışmayı seviyorum, dürüst adamsın. Bakalım buna ne diyeceksin?";
+
+            case RelationshipTier.LoyalPartner:
+                return "Kardeşim selamlar! Elimdeki en değerli parçayı doğrudan sana getirdim. Başkasına götürmedim bile, biliyorum ki hakkını verirsin.";
+
+            default:
+                return "İyi günler, elimdeki bu eşyayı değerlendirmek istiyorum.";
+        }
+    }
+}
+
+// Müşterinin ilişki çarpanlarını devreye sok:
+CustomerStartingPrice = CustomerRelationshipSystem.Instance.ModifyStartingPrice(customer.fullName, CustomerStartingPrice);
+CustomerMinimumPrice = CustomerRelationshipSystem.Instance.ModifyMinimumFloorPrice(customer.fullName, CustomerMinimumPrice);
+CurrentCustomerOffer = CustomerStartingPrice;
+
+// Sabrı ilişkiye göre ayarla:
+CurrentPatience = CustomerRelationshipSystem.Instance.ModifyPatience(customer.fullName, traits.patience);
