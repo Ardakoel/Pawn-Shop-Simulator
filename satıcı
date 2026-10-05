@@ -1,0 +1,121 @@
+using UnityEngine;
+
+public enum BuyerMotivation
+{
+    Collector,  // Koleksiyoner (Ekspertiz şart, bütçesi geniş)
+    GiftBuyer,  // Hediye Arayan (Acelesi var, fiyat esnek)
+    Flipper,    // Fırsatçı / Al-Satçı (Aşırı pazarlıkçı)
+    Showoff     // Gösteriş Meraklısı (Bütçe sıkıntısı yok)
+}
+
+public class BuyerNegotiationSystem : MonoBehaviour
+{
+    public static BuyerNegotiationSystem Instance { get; private set; }
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(gameObject);
+    }
+
+    /// <summary>
+    /// Oyuncunun vitrindeki eşya için alıcı müşteriye söylediği satış fiyatını değerlendirir.
+    /// </summary>
+    public static BuyerTurnResult EvaluateBuyerResponse(
+        float playerAskingPrice, 
+        InventoryItem item, 
+        CustomerData customer, 
+        BuyerMotivation motivation)
+    {
+        BuyerTurnResult result = new BuyerTurnResult();
+        float baseValue = item.actualValue;
+
+        // 1. KONTROL: Ekspertiz Şartı (Saat, Tablo veya Mücevher ise)
+        bool needsAppraisal = item.category == ItemCategory.Watch || 
+                             item.category == ItemCategory.Painting || 
+                             item.category == ItemCategory.Jewelry;
+
+        if (needsAppraisal && !item.isIdentified)
+        {
+            // Koleksiyoner veya Şüpheci ise sertifikasız ürünü asla almaz
+            if (motivation == BuyerMotivation.Collector || customer.traits.honesty > 50)
+            {
+                result.outcome = BuyerNegotiationOutcome.RejectedNoAppraisal;
+                result.dialogueKey = "dial_buyer_no_appraisal_leave";
+                return result;
+            }
+        }
+
+        // 2. MOTİVASYONA GÖRE TAVAN FİYAT HESABI
+        float maxAcceptablePrice = baseValue;
+
+        switch (motivation)
+        {
+            case BuyerMotivation.Collector:
+                // Orijinal ve sertifikalıysa değerinin %150'sine kadar çıkar
+                maxAcceptablePrice = item.isIdentified ? baseValue * 1.50f : baseValue * 0.90f;
+                break;
+
+            case BuyerMotivation.GiftBuyer:
+                // Acelesi varsa %120'ye kadar gözü kapalı verir
+                maxAcceptablePrice = baseValue * (1.10f + (customer.traits.urgency * 0.002f));
+                break;
+
+            case BuyerMotivation.Flipper:
+                // Dışarıda satacağı için değerinin %75'inden fazlasını vermez
+                maxAcceptablePrice = baseValue * 0.75f;
+                break;
+
+            case BuyerMotivation.Showoff:
+                // Gururludur, %135'e kadar çıkar
+                maxAcceptablePrice = baseValue * 1.35f;
+                break;
+        }
+
+        // 3. KARAR MANTIĞI
+        if (playerAskingPrice <= maxAcceptablePrice)
+        {
+            result.outcome = BuyerNegotiationOutcome.Accepted;
+            result.agreedPrice = playerAskingPrice;
+            result.dialogueKey = GetAcceptanceDialogueKey(motivation);
+        }
+        else if (playerAskingPrice <= maxAcceptablePrice * 1.25f)
+        {
+            // Karşı teklif yapar (Fiyatı aşağı çekmeye çalışır)
+            result.outcome = BuyerNegotiationOutcome.CounterOffer;
+            result.counterOfferPrice = Mathf.Round((maxAcceptablePrice * 0.95f) / 10f) * 10f;
+            result.dialogueKey = GetCounterOfferDialogueKey(motivation);
+        }
+        else
+        {
+            // Fiyatı aşırı yüksek bulur ve masayı terk eder veya teklifi reddeder
+            result.outcome = BuyerNegotiationOutcome.Rejected;
+            result.dialogueKey = "dial_buyer_reject_too_high";
+        }
+
+        return result;
+    }
+
+    private static string GetAcceptanceDialogueKey(BuyerMotivation motivation)
+    {
+        switch (motivation)
+        {
+            case BuyerMotivation.Collector: return "dial_buyer_accept_collector";
+            case BuyerMotivation.GiftBuyer: return "dial_buyer_accept_gift";
+            case BuyerMotivation.Flipper: return "dial_buyer_accept_flipper";
+            case BuyerMotivation.Showoff: return "dial_buyer_accept_showoff";
+            default: return "dial_buyer_accept_generic";
+        }
+    }
+
+    private static string GetCounterOfferDialogueKey(BuyerMotivation motivation)
+    {
+        switch (motivation)
+        {
+            case BuyerMotivation.Collector: return "dial_buyer_counter_collector";
+            case BuyerMotivation.GiftBuyer: return "dial_buyer_counter_gift";
+            case BuyerMotivation.Flipper: return "dial_buyer_counter_flipper";
+            default: return "dial_buyer_counter_generic";
+        }
+    }
+}
