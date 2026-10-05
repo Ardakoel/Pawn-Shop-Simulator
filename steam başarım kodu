@@ -1,0 +1,276 @@
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+#if !DISABLESTEAMWORKS
+using Steamworks;
+#endif
+
+public enum AchievementType
+{
+    // Gün & İlerleme
+    FirstDayDone,         // day1: İlk günü bitir
+    WeekOneSurvived,      // 7 gün dayan
+    MonthOneMaster,       // 30 gün dayan
+    FirstProfit,          // work: İlk kârlı satış yapıldığında
+
+    // Alım / Satım (Pazarlık)
+    GoodDeal,             // trader: Değerinin %50 altına mal al
+    MasterTrader,         // master_trader: Değerinin %75 altına mal al
+    HighwayRobbery,       // Değerinin %85 altına mal al
+    OverpricedSale,       // Malı piyasa değerinin %150 üzerine sat
+    NegotiationMaster,    // Bir günde 10 başarılı pazarlık yap
+
+    // İllegal & Suç Mekanikleri
+    StolenGoods,          // Çalıntı eşya satın al
+    PoliceBribe,          // Polise rüşvet ver veya sıyrıl
+    BustedByPolice,       // Deponda çalıntı mal yakalat ve ceza ye
+    CleanLaundry,         // 10 adet çalıntı eşyayı yakalanmadan sat
+
+    // İnceleme & Ekspertiz
+    MagnifyingGlass,      // İlk kez büyüteç/inceleme aracı kullan
+    FakeExposed,          // Sahtekârı yüzüne vurarak dükkândan kov
+    Scammed,              // Sahte ürünü gerçek sanıp pahalıya satın al
+    ExpertAppraiser,      // 25 ürünü ekspertize gönderip doğrulat
+
+    // Şube & Finans
+    FirstBranch,          // İlk ek şubeyi aç
+    BranchEmpire,          // Queens, Brooklyn ve Manhattan şubelerinin hepsine sahip ol
+    BigSpender,           // Kasada $100.000 biriktir
+    Bankrupt,             // İflas et (Game Over)
+
+    // Koleksiyon & Borsa
+    FirstCollection,      // İlk koleksiyon setini tamamla
+    CollectorKing,        // Bütün koleksiyon albümlerini tamamla
+    MarketSpeculator,     // Borsa haberini takip edip fiyatı yükselen malı sat
+
+    // Beden Dili & Psikoloji
+    MindReader,           // Müşterinin beden dilinden yalan söylediğini anla
+    PatienceMaster,       // Müşteri sabrı %5 kalmışken anlaşmayı sağla
+    WalkAway,             // 10 müşteriyi fiyatı beğenmeyip dükkândan kaçır
+
+    // Gizli / Başarım Çeşitleri (35'e Tamamlayan Ekstra)
+    NightOwl,             // Gece 12'ye kadar dükkânı kapatma
+    GoldDigger,           // Som altın ürünü asit testiyle doğrula
+    VintageWatch,         // 1970 öncesi lüks bir saati ucuza kapat
+    CharityWork,          // Bir müşteriye değerinin üstünde para ver (Zararına alım)
+    MasterMinder,         // Hiç polise yakalanmadan 30 gün geçir
+    ZeroPatience,         // Müşteriyi sabrını sıfırlayıp kovdur
+    PawnGod               // Toplam $1.000.000 ciroya ulaş
+}
+
+public class SteamAchievementManager : MonoBehaviour
+{
+    public static SteamAchievementManager Instance { get; private set; }
+
+    private HashSet<string> unlockedAchievements = new HashSet<string>();
+
+    private void Awake()
+    {
+        if (Instance == null)
+        {
+            Instance = this;
+            DontDestroyOnLoad(gameObject);
+        }
+        else
+        {
+            Destroy(gameObject);
+        }
+    }
+
+    private void Start()
+    {
+#if !DISABLESTEAMWORKS
+        if (!SteamManager.Initialized)
+        {
+            Debug.LogWarning("[STEAM]: Steam Manager başlatılamadı. Başarımlar yerel olarak çalışacak.");
+            return;
+        }
+#endif
+    }
+
+    /// <summary>
+    /// Verilen başarım kodunun kilidini açar.
+    /// </summary>
+    public void UnlockAchievement(AchievementType achievement)
+    {
+        string achievementID = GetAchievementKey(achievement);
+
+        if (unlockedAchievements.Contains(achievementID)) return;
+
+        unlockedAchievements.Add(achievementID);
+        Debug.Log($"<color=green>[SUCCESS ACHIEVEMENT]:</color> {achievementID} kilidi açıldı!");
+
+#if !DISABLESTEAMWORKS
+        if (SteamManager.Initialized)
+        {
+            SteamUserStats.SetAchievement(achievementID);
+            SteamUserStats.StoreStats(); // Steam sunucusuna bildir
+        }
+#endif
+    }
+
+    /// <summary>
+    /// Alım satım işlemlerinde kâr ve indirim oranına göre başarımları tetikler.
+    /// </summary>
+    public void OnItemPurchased(float actualValue, float paidPrice, bool isStolen, bool isFake)
+    {
+        float discountRatio = (actualValue - paidPrice) / actualValue;
+
+        // %50 ve üzeri indirim
+        if (discountRatio >= 0.50f && discountRatio < 0.75f)
+        {
+            UnlockAchievement(AchievementType.GoodDeal);
+        }
+        // %75 ve üzeri indirim
+        else if (discountRatio >= 0.75f && discountRatio < 0.85f)
+        {
+            UnlockAchievement(AchievementType.MasterTrader);
+        }
+        // %85 ve üzeri soygun gibi indirim
+        else if (discountRatio >= 0.85f)
+        {
+            UnlockAchievement(AchievementType.HighwayRobbery);
+        }
+
+        // Çalıntı mal başarımı
+        if (isStolen)
+        {
+            UnlockAchievement(AchievementType.StolenGoods);
+        }
+
+        // Sahte mala kanma
+        if (isFake && paidPrice >= actualValue)
+        {
+            UnlockAchievement(AchievementType.Scammed);
+        }
+
+        // Zararına alış (Hayırsever)
+        if (paidPrice > actualValue * 1.20f)
+        {
+            UnlockAchievement(AchievementType.CharityWork);
+        }
+    }
+
+    private string GetAchievementKey(AchievementType type)
+    {
+        switch (type)
+        {
+            case AchievementType.FirstDayDone: return "ACH_DAY_1";
+            case AchievementType.GoodDeal: return "ACH_TRADER";
+            case AchievementType.MasterTrader: return "ACH_MASTER_TRADER";
+            case AchievementType.FirstProfit: return "ACH_WORK";
+            case AchievementType.StolenGoods: return "ACH_STOLEN_GOODS";
+            default: return "ACH_" + type.ToString().ToUpper();
+        }
+    }
+}
+
+"================_STEAM_ACHIEVEMENTS_================": "",
+  "ach_day_1_title": "First Step",
+  "ach_day_1_desc": "Complete your very first day in the pawn shop.",
+  "ach_trader_title": "Trader",
+  "ach_trader_desc": "Buy an item for 50% or more below its actual market value.",
+  "ach_master_trader_title": "Master Trader",
+  "ach_master_trader_desc": "Buy an item for 75% or more below its actual market value.",
+  "ach_work_title": "First Profit",
+  "ach_work_desc": "Sell your first item for a net profit.",
+  "ach_stolen_goods_title": "Hot Commodity",
+  "ach_stolen_goods_desc": "Purchase an item flagged as stolen.",
+  "ach_highwayrobbery_title": "Highway Robbery",
+  "ach_highwayrobbery_desc": "Buy an item for 85% or more below its market value.",
+  "ach_overpricedsale_title": "Silver Tongue",
+  "ach_overpricedsale_desc": "Sell an item for 150% above its actual market value.",
+  "ach_bustedbypolice_title": "Busted",
+  "ach_bustedbypolice_desc": "Get caught during a police raid with stolen goods in stock.",
+  "ach_cleanlaundry_title": "Clean Laundry",
+  "ach_cleanlaundry_desc": "Successfully sell 10 stolen items without police detection.",
+  "ach_fakeexposed_title": "Not On My Watch",
+  "ach_fakeexposed_desc": "Confront a scammer and expose a counterfeit item.",
+  "ach_scammed_title": "Costly Mistake",
+  "ach_scammed_desc": "Buy a counterfeit item believing it was authentic.",
+  "ach_firstbranch_title": "Expanding Business",
+  "ach_firstbranch_desc": "Lease your second pawn shop location.",
+  "ach_branchempire_title": "Pawn Empire",
+  "ach_branchempire_desc": "Operate branches in Queens, Brooklyn, and Manhattan simultaneously.",
+  "ach_bankrupt_title": "End of the Line",
+  "ach_bankrupt_title_desc": "Go bankrupt and lose your shop.",
+  "ach_firstcollection_title": "Collector",
+  "ach_firstcollection_desc": "Complete your first album collection set.",
+  "ach_golddigger_title": "Gold Digger",
+  "ach_golddigger_desc": "Verify solid gold using the acid test kit.",
+  "ach_mindreader_title": "Mind Reader",
+  "ach_mindreader_desc": "Detect a scammer solely from their body language cues.",
+  "ach_pawngod_title": "Pawn God",
+  "ach_pawngod_desc": "Reach a cumulative total revenue of $1,000,000."
+
+
+  SteamAchievementManager.Instance.UnlockAchievement(AchievementType.FirstDayDone);
+
+
+  if (profit > 0)
+{
+    SteamAchievementManager.Instance.UnlockAchievement(AchievementType.FirstProfit);
+}
+
+SteamAchievementManager.Instance.UnlockAchievement(AchievementType.FakeExposed);
+
+SteamAchievementManager.Instance.UnlockAchievement(AchievementType.BustedByPolice);
+
+private string GetAchievementKey(AchievementType type)
+{
+    switch (type)
+    {
+        // Gün & İlerleme
+        case AchievementType.FirstDayDone: return "ACH_DAY_1";
+        case AchievementType.WeekOneSurvived: return "ACH_WEEK_1";
+        case AchievementType.MonthOneMaster: return "ACH_MONTH_1";
+        case AchievementType.FirstProfit: return "ACH_WORK";
+
+        // Alım / Satım (Pazarlık)
+        case AchievementType.GoodDeal: return "ACH_TRADER";
+        case AchievementType.MasterTrader: return "ACH_MASTER_TRADER";
+        case AchievementType.HighwayRobbery: return "ACH_HIGHWAY_ROBBERY";
+        case AchievementType.OverpricedSale: return "ACH_OVERPRICED_SALE";
+        case AchievementType.NegotiationMaster: return "ACH_NEGOTIATION_MASTER";
+
+        // İllegal & Suç Mekanikleri
+        case AchievementType.StolenGoods: return "ACH_STOLEN_GOODS";
+        case AchievementType.PoliceBribe: return "ACH_POLICE_BRIBE";
+        case AchievementType.BustedByPolice: return "ACH_BUSTED_BY_POLICE";
+        case AchievementType.CleanLaundry: return "ACH_CLEAN_LAUNDRY";
+
+        // İnceleme & Ekspertiz
+        case AchievementType.MagnifyingGlass: return "ACH_MAGNIFYING_GLASS";
+        case AchievementType.FakeExposed: return "ACH_FAKE_EXPOSED";
+        case AchievementType.Scammed: return "ACH_SCAMMED";
+        case AchievementType.ExpertAppraiser: return "ACH_EXPERT_APPRAISER";
+
+        // Şube & Finans
+        case AchievementType.FirstBranch: return "ACH_FIRST_BRANCH";
+        case AchievementType.BranchEmpire: return "ACH_BRANCH_EMPIRE";
+        case AchievementType.BigSpender: return "ACH_BIG_SPENDER";
+        case AchievementType.Bankrupt: return "ACH_BANKRUPT";
+
+        // Koleksiyon & Borsa
+        case AchievementType.FirstCollection: return "ACH_FIRST_COLLECTION";
+        case AchievementType.CollectorKing: return "ACH_COLLECTOR_KING";
+        case AchievementType.MarketSpeculator: return "ACH_MARKET_SPECULATOR";
+
+        // Beden Dili & Psikoloji
+        case AchievementType.MindReader: return "ACH_MIND_READER";
+        case AchievementType.PatienceMaster: return "ACH_PATIENCE_MASTER";
+        case AchievementType.WalkAway: return "ACH_WALK_AWAY";
+
+        // Ekstra Başarımlar
+        case AchievementType.NightOwl: return "ACH_NIGHT_OWL";
+        case AchievementType.GoldDigger: return "ACH_GOLD_DIGGER";
+        case AchievementType.VintageWatch: return "ACH_VINTAGE_WATCH";
+        case AchievementType.CharityWork: return "ACH_CHARITY_WORK";
+        case AchievementType.MasterMinder: return "ACH_MASTER_MINDER";
+        case AchievementType.ZeroPatience: return "ACH_ZERO_PATIENCE";
+        case AchievementType.PawnGod: return "ACH_PAWN_GOD";
+
+        default: return "ACH_UNKNOWN";
+    }
+}
+
